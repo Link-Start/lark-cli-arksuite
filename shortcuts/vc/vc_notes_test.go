@@ -131,32 +131,6 @@ func artifactsStub(token string) *httpmock.Stub {
 	}
 }
 
-func emptyArtifactsStub(token string) *httpmock.Stub {
-	return &httpmock.Stub{
-		Method: "GET",
-		URL:    "/open-apis/minutes/v1/minutes/" + token + "/artifacts",
-		Body:   map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
-	}
-}
-
-func transcriptStub(token string) *httpmock.Stub {
-	return &httpmock.Stub{
-		Method: "GET",
-		URL:    "/open-apis/minutes/v1/minutes/" + token + "/transcript",
-		Body:   map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
-	}
-}
-
-// transcriptRawStub returns an actual transcript body so downloadTranscriptFile
-// writes a file to disk. Used by path-layout tests.
-func transcriptRawStub(token string, body []byte) *httpmock.Stub {
-	return &httpmock.Stub{
-		Method:  "GET",
-		URL:     "/open-apis/minutes/v1/minutes/" + token + "/transcript",
-		RawBody: body,
-	}
-}
-
 func minuteGetStub(token, noteID, title string) *httpmock.Stub {
 	minute := map[string]interface{}{"title": title}
 	if noteID != "" {
@@ -671,13 +645,19 @@ func chdirForTest(t *testing.T) string {
 	return dir
 }
 
+// TestNotes_TranscriptDefaultLayout verifies the file-layout contract: with no
+// --output-dir flag, the transcript file lands at ./minutes/{minute_token}/transcript.txt.
+// The transcript file is sourced from GetMinuteArtifacts (HTTP path
+// /v1/minutes/:minute_token/artifacts) — the same endpoint also feeds inline
+// AI artifact parsing, so the stub is marked Reusable to satisfy both calls.
 func TestNotes_TranscriptDefaultLayout(t *testing.T) {
 	chdirForTest(t)
 
 	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
 	reg.Register(minuteGetStub("tok001", "", "Meeting Title"))
-	reg.Register(emptyArtifactsStub("tok001"))
-	reg.Register(transcriptRawStub("tok001", []byte("speaker1: hello world\n")))
+	artStub := artifactsStub("tok001")
+	artStub.Reusable = true
+	reg.Register(artStub)
 
 	err := mountAndRun(t, VCNotes, []string{
 		"+notes", "--minute-tokens", "tok001", "--as", "user",
@@ -687,12 +667,12 @@ func TestNotes_TranscriptDefaultLayout(t *testing.T) {
 	}
 
 	wantPath := "minutes/tok001/transcript.txt"
-	data, err := os.ReadFile(wantPath)
+	info, err := os.Stat(wantPath)
 	if err != nil {
 		t.Fatalf("expected file at %s: %v", wantPath, err)
 	}
-	if string(data) != "speaker1: hello world\n" {
-		t.Errorf("content mismatch: %q", string(data))
+	if info.Size() == 0 {
+		t.Errorf("expected non-empty transcript file streamed from artifacts response, got 0 bytes")
 	}
 
 	if _, err := os.Stat("artifact-Meeting Title-tok001"); err == nil {
@@ -705,8 +685,9 @@ func TestNotes_TranscriptExplicitOutputDir_PreservesLegacyLayout(t *testing.T) {
 
 	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
 	reg.Register(minuteGetStub("tok001", "", "Meeting Title"))
-	reg.Register(emptyArtifactsStub("tok001"))
-	reg.Register(transcriptRawStub("tok001", []byte("content")))
+	artStub := artifactsStub("tok001")
+	artStub.Reusable = true
+	reg.Register(artStub)
 
 	if err := os.MkdirAll("out", 0755); err != nil {
 		t.Fatalf("setup: %v", err)

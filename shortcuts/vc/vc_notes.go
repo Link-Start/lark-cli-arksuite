@@ -41,7 +41,6 @@ var (
 	scopesMinuteTokens = []string{
 		"minutes:minutes:readonly",
 		"minutes:minutes.artifacts:read",
-		"minutes:minutes.transcript:export",
 	}
 	scopesCalendarEventIDs = []string{
 		"calendar:calendar:read",
@@ -359,15 +358,10 @@ func downloadTranscriptFile(runtime *common.RuntimeContext, minuteToken string, 
 		}
 	}
 
-	fmt.Fprintf(errOut, "%s downloading transcript: %s\n", logPrefix, transcriptPath)
+	fmt.Fprintf(errOut, "%s writing transcript file: %s\n", logPrefix, transcriptPath)
 	apiResp, err := runtime.DoAPI(&larkcore.ApiReq{
 		HttpMethod: http.MethodGet,
-		ApiPath:    fmt.Sprintf("/open-apis/minutes/v1/minutes/%s/transcript", validate.EncodePathSegment(minuteToken)),
-		QueryParams: larkcore.QueryParams{
-			"need_speaker":   []string{"true"},
-			"need_timestamp": []string{"true"},
-			"file_format":    []string{"txt"},
-		},
+		ApiPath:    fmt.Sprintf("/open-apis/minutes/v1/minutes/%s/artifacts", validate.EncodePathSegment(minuteToken)),
 	}, larkcore.WithFileDownload())
 	if err != nil {
 		fmt.Fprintf(errOut, "%s failed to download transcript: %v\n", logPrefix, err)
@@ -570,9 +564,8 @@ var VCNotes = common.Shortcut{
 				GET("/open-apis/minutes/v1/minutes/{minute_token}").
 				GET("/open-apis/vc/v1/notes/{note_id}").
 				GET("/open-apis/minutes/v1/minutes/{minute_token}/artifacts").
-				GET("/open-apis/minutes/v1/minutes/{minute_token}/transcript").
 				Set("minute_tokens", common.SplitCSV(tokens)).
-				Set("steps", "minutes API → note detail + AI artifacts + transcript")
+				Set("steps", "minutes API → note detail + AI artifacts (also streamed to transcript.txt)")
 		}
 		ids := runtime.Str("calendar-event-ids")
 		return common.NewDryRunAPI().

@@ -52,7 +52,7 @@ send the verification URL to the user as your final message, end the turn, then
 run --device-code in a later step after the user confirms authorization.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if mode := f.ResolveStrictMode(cmd.Context()); mode == core.StrictModeBot {
-				return output.ErrWithHint(output.ExitValidation, "strict_mode",
+				return output.ErrWithHint(output.ExitValidation, "command_denied",
 					fmt.Sprintf("strict mode is %q, user login is disabled in this profile", mode),
 					"if the user explicitly wants to switch to user identity, see `lark-cli config strict-mode --help` (confirm with the user before switching; switching does NOT require re-bind)")
 			}
@@ -64,6 +64,7 @@ run --device-code in a later step after the user confirms authorization.`,
 		},
 	}
 	cmdutil.SetSupportedIdentities(cmd, []string{"user"})
+	cmdutil.SetRisk(cmd, "write")
 
 	cmd.Flags().StringVar(&opts.Scope, "scope", "", "scopes to request (space- or comma-separated). Combines additively with --domain/--recommend")
 	cmd.Flags().BoolVar(&opts.Recommend, "recommend", false, "request only recommended (auto-approve) scopes")

@@ -773,14 +773,14 @@
         "kind": "own",
         "type": "int",
         "required": "required",
-        "desc": "Start position (0-based, inclusive)"
+        "desc": "Start position (0-based)"
       },
       {
         "name": "end",
         "kind": "own",
         "type": "int",
         "required": "required",
-        "desc": "End position (0-based, inclusive)"
+        "desc": "End position (exclusive)"
       },
       {
         "name": "dry-run",
@@ -838,14 +838,14 @@
         "kind": "own",
         "type": "int",
         "required": "required",
-        "desc": "Start position (0-based, inclusive)"
+        "desc": "Start position (0-based)"
       },
       {
         "name": "end",
         "kind": "own",
         "type": "int",
         "required": "required",
-        "desc": "End position (0-based, inclusive)"
+        "desc": "End position (exclusive)"
       },
       {
         "name": "dry-run",
@@ -961,14 +961,14 @@
         "kind": "own",
         "type": "int",
         "required": "required",
-        "desc": "Start position (0-based, inclusive)"
+        "desc": "Start position (0-based)"
       },
       {
         "name": "end",
         "kind": "own",
         "type": "int",
         "required": "required",
-        "desc": "End position (0-based, inclusive)"
+        "desc": "End position (exclusive)"
       },
       {
         "name": "depth",
@@ -1046,14 +1046,14 @@
         "kind": "own",
         "type": "int",
         "required": "required",
-        "desc": "Start position (0-based, inclusive)"
+        "desc": "Start position (0-based)"
       },
       {
         "name": "end",
         "kind": "own",
         "type": "int",
         "required": "required",
-        "desc": "End position (0-based, inclusive)"
+        "desc": "End position (exclusive)"
       },
       {
         "name": "depth",
@@ -3184,7 +3184,7 @@
         "kind": "own",
         "type": "string",
         "required": "required",
-        "desc": "JSON: `{\"data_range\":\"Sheet1!A1:F1000\",\"rows\":[...],\"columns\":[...],\"values\":[...],\"filters\":[...],\"show_row_grand_total\":true,\"show_col_grand_total\":true}`",
+        "desc": "JSON: {\"rows\":[...],\"columns\":[...],\"values\":[...],\"filters\":[...],\"show_row_grand_total\":true,\"show_col_grand_total\":true} (data source goes through --source; do not put data_range here)",
         "input": [
           "file",
           "stdin"
@@ -3436,19 +3436,19 @@
         "required": "required",
         "desc": "Conditional format rule type; takes precedence over the same-named field inside `--properties`",
         "enum": [
-          "cellValue",
-          "formula",
-          "duplicate",
-          "unique",
-          "topBottom",
-          "aboveBelowAverage",
+          "duplicateValues",
+          "uniqueValues",
+          "cellIs",
+          "containsText",
+          "timePeriod",
+          "containsBlanks",
+          "notContainsBlanks",
           "dataBar",
           "colorScale",
-          "iconSet",
-          "textContains",
-          "dateOccurring",
-          "blankCell",
-          "errorCell"
+          "rank",
+          "aboveAverage",
+          "expression",
+          "iconSet"
         ]
       },
       {
@@ -3527,19 +3527,19 @@
         "required": "required",
         "desc": "Conditional format rule type; takes precedence over the same-named field inside `--properties`",
         "enum": [
-          "cellValue",
-          "formula",
-          "duplicate",
-          "unique",
-          "topBottom",
-          "aboveBelowAverage",
+          "duplicateValues",
+          "uniqueValues",
+          "cellIs",
+          "containsText",
+          "timePeriod",
+          "containsBlanks",
+          "notContainsBlanks",
           "dataBar",
           "colorScale",
-          "iconSet",
-          "textContains",
-          "dateOccurring",
-          "blankCell",
-          "errorCell"
+          "rank",
+          "aboveAverage",
+          "expression",
+          "iconSet"
         ]
       },
       {

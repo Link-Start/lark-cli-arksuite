@@ -306,18 +306,21 @@ var PivotDelete = newObjectDeleteShortcut(pivotSpec)
 // conditional format — CLI surface uses --rule-id (short), wired to the
 // tool's conditional_format_id on the wire. --rule-type and --ranges are
 // hoisted out of properties (both required, set on every CRUD write).
+//
+// Wire shape matches manage_conditional_format_object.properties — the
+// enum value lives at properties.rule_type (flat string, NOT nested under
+// a `rule` object), and ranges is a sibling array. Earlier CLI builds
+// wrote properties.rule.type which the server silently dropped — both
+// path and enum vocabulary are now aligned with the server schema (see
+// sheet-skill-spec/canonical-spec/tool-schemas/mcp-tools.json line
+// 3305-3324).
 var condFormatEnhance = func(rt flagView, input map[string]interface{}) {
 	props, _ := input["properties"].(map[string]interface{})
 	if props == nil {
 		return
 	}
 	if ruleType := strings.TrimSpace(rt.Str("rule-type")); ruleType != "" {
-		rule, _ := props["rule"].(map[string]interface{})
-		if rule == nil {
-			rule = map[string]interface{}{}
-		}
-		rule["type"] = ruleType
-		props["rule"] = rule
+		props["rule_type"] = ruleType
 	}
 	if rt.Str("ranges") != "" {
 		if arr, err := requireJSONArray(rt, "ranges"); err == nil {
@@ -648,6 +651,9 @@ func filterUpdateInput(runtime flagView, token, sheetID, sheetName string) (map[
 	if err := requireSheetSelector(sheetID, sheetName); err != nil {
 		return nil, err
 	}
+	if sheetID == "" {
+		return nil, common.FlagErrorf("+filter-update requires --sheet-id (filter_id must equal sheet_id; --sheet-name needs a network lookup unavailable here — call +workbook-info first or pass --sheet-id directly)")
+	}
 	if strings.TrimSpace(runtime.Str("range")) == "" {
 		return nil, common.FlagErrorf("--range is required")
 	}
@@ -660,6 +666,7 @@ func filterUpdateInput(runtime flagView, token, sheetID, sheetName string) (map[
 	input := map[string]interface{}{
 		"excel_id":   token,
 		"operation":  "update",
+		"filter_id":  sheetID, // server contract: filter_id === sheet_id for sheet-scoped filters
 		"properties": props,
 	}
 	sheetSelectorForToolInput(input, sheetID, sheetName)
@@ -706,12 +713,23 @@ var FilterDelete = common.Shortcut{
 }
 
 // filterDeleteInput mirrors the standalone +filter-delete body for batch
-// sub-op reuse. filter_id is implicit (sheet-scoped), so no extra id flag.
+// sub-op reuse. Server contract: filter_id === sheet_id, and update/delete
+// must populate filter_id (per manage_filter_object schema). The CLI has no
+// separate --filter-id flag because the value is fully derived from sheet_id;
+// only --sheet-id is accepted (not --sheet-name, since there's no mid-call
+// network lookup to resolve it).
 func filterDeleteInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
 	if err := requireSheetSelector(sheetID, sheetName); err != nil {
 		return nil, err
 	}
-	input := map[string]interface{}{"excel_id": token, "operation": "delete"}
+	if sheetID == "" {
+		return nil, common.FlagErrorf("+filter-delete requires --sheet-id (filter_id must equal sheet_id; --sheet-name needs a network lookup unavailable here — call +workbook-info first or pass --sheet-id directly)")
+	}
+	input := map[string]interface{}{
+		"excel_id":  token,
+		"operation": "delete",
+		"filter_id": sheetID, // server contract: filter_id === sheet_id
+	}
 	sheetSelectorForToolInput(input, sheetID, sheetName)
 	return input, nil
 }

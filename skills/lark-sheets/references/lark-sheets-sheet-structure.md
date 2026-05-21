@@ -88,8 +88,8 @@ _公共四件套 · 系统：`--dry-run`_
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `--dimension` | string | required | 维度方向（行或列）（可选值：`row` / `column`） |
-| `--start` | int | required | 起始位置（0-based, inclusive） |
-| `--end` | int | required | 结束位置（0-based, inclusive） |
+| `--start` | int | required | 起始位置（0-based） |
+| `--end` | int | required | 结束位置（exclusive） |
 
 ### `+dim-unhide`
 
@@ -98,8 +98,8 @@ _公共四件套 · 系统：`--dry-run`_
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `--dimension` | string | required | 维度方向（行或列）（可选值：`row` / `column`） |
-| `--start` | int | required | 起始位置（0-based, inclusive） |
-| `--end` | int | required | 结束位置（0-based, inclusive） |
+| `--start` | int | required | 起始位置（0-based） |
+| `--end` | int | required | 结束位置（exclusive） |
 
 ### `+dim-freeze`
 
@@ -117,8 +117,8 @@ _公共四件套 · 系统：`--dry-run`_
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `--dimension` | string | required | 维度方向（行或列）（可选值：`row` / `column`） |
-| `--start` | int | required | 起始位置（0-based, inclusive） |
-| `--end` | int | required | 结束位置（0-based, inclusive） |
+| `--start` | int | required | 起始位置（0-based） |
+| `--end` | int | required | 结束位置（exclusive） |
 | `--depth` | int | optional | 嵌套层级（`+dim-group` 用），默认 1 |
 | `--group-state` | string | optional | 分组初始展开状态（可选值：`expand` / `fold`） |
 
@@ -129,8 +129,8 @@ _公共四件套 · 系统：`--dry-run`_
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `--dimension` | string | required | 维度方向（行或列）（可选值：`row` / `column`） |
-| `--start` | int | required | 起始位置（0-based, inclusive） |
-| `--end` | int | required | 结束位置（0-based, inclusive） |
+| `--start` | int | required | 起始位置（0-based） |
+| `--end` | int | required | 结束位置（exclusive） |
 | `--depth` | int | optional | 嵌套层级（`+dim-group` 用），默认 1 |
 
 ### `+dim-move`

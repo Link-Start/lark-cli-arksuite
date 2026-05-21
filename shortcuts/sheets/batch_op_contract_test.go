@@ -210,8 +210,8 @@ func TestBatchOp_BodyMatchesStandalone(t *testing.T) {
 		{
 			shortcut: "+cond-format-create",
 			sc:       CondFormatCreate,
-			args:     []string{"--sheet-id", "sh1", "--properties", `{"style":{}}`, "--rule-type", "duplicate", "--ranges", `["A1:A100"]`},
-			subInput: `{"sheet-id":"sh1","properties":{"style":{}},"rule-type":"duplicate","ranges":["A1:A100"]}`,
+			args:     []string{"--sheet-id", "sh1", "--properties", `{"style":{}}`, "--rule-type", "duplicateValues", "--ranges", `["A1:A100"]`},
+			subInput: `{"sheet-id":"sh1","properties":{"style":{}},"rule-type":"duplicateValues","ranges":["A1:A100"]}`,
 		},
 		{
 			shortcut: "+filter-create",
@@ -515,6 +515,21 @@ func TestBatchOp_RejectsBadSubOpInput(t *testing.T) {
 			"+float-image-update",
 			`{"sheet-id":"sh1","image-name":"x.png","image-token":"t","position-row":0,"position-col":"A","size-width":100,"size-height":50}`,
 			"--float-image-id is required",
+		},
+		// +filter-{update,delete} need sheet-id (not sheet-name) because
+		// server contract: filter_id === sheet_id, and we can't resolve
+		// sheet-name → sheet-id mid-batch.
+		{
+			"+filter-update with --sheet-name only (filter_id must equal sheet_id)",
+			"+filter-update",
+			`{"sheet-name":"Sheet1","range":"A1:F1000","properties":{"rules":[]}}`,
+			"+filter-update requires --sheet-id",
+		},
+		{
+			"+filter-delete with --sheet-name only (filter_id must equal sheet_id)",
+			"+filter-delete",
+			`{"sheet-name":"Sheet1"}`,
+			"+filter-delete requires --sheet-id",
 		},
 	}
 

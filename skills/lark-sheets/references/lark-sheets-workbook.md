@@ -161,6 +161,10 @@ lark-cli sheets +sheet-create --url "https://example.feishu.cn/sheets/shtXXX" \
 
 ### `+sheet-move`
 
+standalone 路径在缺 `--source-index` / 只给 `--sheet-name` 时会自动发起一次 `+workbook-info` 读把它们解出来。
+
+> ⚠️ **在 `+batch-update` 内调用 `+sheet-move`**：必须同时显式传 `--sheet-id` 和 `--source-index`。batch 中途无法发起结构查询，所以 batch translator 强制要求两者都显式。
+
 ### `+sheet-copy`
 
 ### `+sheet-hide` / `+sheet-unhide`

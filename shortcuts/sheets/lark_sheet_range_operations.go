@@ -36,22 +36,12 @@ var CellsClear = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+cells-clear"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if strings.TrimSpace(runtime.Str("range")) == "" {
-			return common.FlagErrorf("--range is required")
-		}
-		return nil
-	},
+	Validate:    validateViaInput(cellsClearInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "clear_cell_range", cellsClearInput(runtime, token, sheetID, sheetName))
+		input, _ := cellsClearInput(runtime, token, sheetID, sheetName)
+		return invokeToolDryRun(token, ToolKindWrite, "clear_cell_range", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -62,7 +52,11 @@ var CellsClear = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "clear_cell_range", cellsClearInput(runtime, token, sheetID, sheetName))
+		input, err := cellsClearInput(runtime, token, sheetID, sheetName)
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "clear_cell_range", input)
 		if err != nil {
 			return err
 		}
@@ -74,7 +68,13 @@ var CellsClear = common.Shortcut{
 	},
 }
 
-func cellsClearInput(runtime flagView, token, sheetID, sheetName string) map[string]interface{} {
+func cellsClearInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("range")) == "" {
+		return nil, common.FlagErrorf("--range is required")
+	}
 	scope := runtime.Str("scope")
 	clearType := "contents"
 	switch scope {
@@ -89,7 +89,7 @@ func cellsClearInput(runtime flagView, token, sheetID, sheetName string) map[str
 		"clear_type": clearType,
 	}
 	sheetSelectorForToolInput(input, sheetID, sheetName)
-	return input
+	return input, nil
 }
 
 // CellsMerge / CellsUnmerge share the merge_cells tool, dispatched by the
@@ -114,21 +114,20 @@ func newMergeShortcut(command, desc, op string, withMergeType bool) common.Short
 		HasFormat:   true,
 		Flags:       flags,
 		Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-			if _, err := resolveSpreadsheetToken(runtime); err != nil {
+			token, err := resolveSpreadsheetToken(runtime)
+			if err != nil {
 				return err
 			}
-			if _, _, err := resolveSheetSelector(runtime); err != nil {
-				return err
-			}
-			if strings.TrimSpace(runtime.Str("range")) == "" {
-				return common.FlagErrorf("--range is required")
-			}
-			return nil
+			sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+			sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+			_, err = mergeInput(runtime, token, sheetID, sheetName, op, withMergeType)
+			return err
 		},
 		DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 			token, _ := resolveSpreadsheetToken(runtime)
 			sheetID, sheetName, _ := resolveSheetSelector(runtime)
-			return invokeToolDryRun(token, ToolKindWrite, "merge_cells", mergeInput(runtime, token, sheetID, sheetName, op, withMergeType))
+			input, _ := mergeInput(runtime, token, sheetID, sheetName, op, withMergeType)
+			return invokeToolDryRun(token, ToolKindWrite, "merge_cells", input)
 		},
 		Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 			token, err := resolveSpreadsheetToken(runtime)
@@ -139,7 +138,11 @@ func newMergeShortcut(command, desc, op string, withMergeType bool) common.Short
 			if err != nil {
 				return err
 			}
-			out, err := callTool(ctx, runtime, token, ToolKindWrite, "merge_cells", mergeInput(runtime, token, sheetID, sheetName, op, withMergeType))
+			input, err := mergeInput(runtime, token, sheetID, sheetName, op, withMergeType)
+			if err != nil {
+				return err
+			}
+			out, err := callTool(ctx, runtime, token, ToolKindWrite, "merge_cells", input)
 			if err != nil {
 				return err
 			}
@@ -149,7 +152,13 @@ func newMergeShortcut(command, desc, op string, withMergeType bool) common.Short
 	}
 }
 
-func mergeInput(runtime flagView, token, sheetID, sheetName, op string, withMergeType bool) map[string]interface{} {
+func mergeInput(runtime flagView, token, sheetID, sheetName, op string, withMergeType bool) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("range")) == "" {
+		return nil, common.FlagErrorf("--range is required")
+	}
 	input := map[string]interface{}{
 		"excel_id":  token,
 		"range":     strings.TrimSpace(runtime.Str("range")),
@@ -163,7 +172,7 @@ func mergeInput(runtime flagView, token, sheetID, sheetName, op string, withMerg
 			input["merge_type"] = "all"
 		}
 	}
-	return input
+	return input, nil
 }
 
 // resize_range now exposes two CLI shortcuts:
@@ -190,11 +199,12 @@ var RowsResize = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+rows-resize"),
-	Validate:    validateResize("row"),
+	Validate:    validateViaResize("row"),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "resize_range", resizeInput(runtime, token, sheetID, sheetName, "row"))
+		input, _ := resizeInput(runtime, token, sheetID, sheetName, "row")
+		return invokeToolDryRun(token, ToolKindWrite, "resize_range", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -205,7 +215,11 @@ var RowsResize = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "resize_range", resizeInput(runtime, token, sheetID, sheetName, "row"))
+		input, err := resizeInput(runtime, token, sheetID, sheetName, "row")
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "resize_range", input)
 		if err != nil {
 			return err
 		}
@@ -225,11 +239,12 @@ var ColsResize = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+cols-resize"),
-	Validate:    validateResize("column"),
+	Validate:    validateViaResize("column"),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "resize_range", resizeInput(runtime, token, sheetID, sheetName, "column"))
+		input, _ := resizeInput(runtime, token, sheetID, sheetName, "column")
+		return invokeToolDryRun(token, ToolKindWrite, "resize_range", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -240,7 +255,11 @@ var ColsResize = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "resize_range", resizeInput(runtime, token, sheetID, sheetName, "column"))
+		input, err := resizeInput(runtime, token, sheetID, sheetName, "column")
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "resize_range", input)
 		if err != nil {
 			return err
 		}
@@ -249,38 +268,19 @@ var ColsResize = common.Shortcut{
 	},
 }
 
-// validateResize returns a Validate closure shared by both rows/cols shortcuts.
-// dimension is either "row" or "column"; the closure rejects --type auto on
-// columns (column widths do not support auto-fit).
-func validateResize(dimension string) func(ctx context.Context, runtime *common.RuntimeContext) error {
+// validateViaResize wires the standalone Validate to resizeInput so both
+// paths (standalone + batch sub-op) emit the same error for missing --type,
+// out-of-range --start/--end, or --type auto on columns.
+func validateViaResize(dimension string) func(ctx context.Context, runtime *common.RuntimeContext) error {
 	return func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
+		token, err := resolveSpreadsheetToken(runtime)
+		if err != nil {
 			return err
 		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if !runtime.Changed("start") || !runtime.Changed("end") {
-			return common.FlagErrorf("--start and --end are required")
-		}
-		if runtime.Int("start") < 0 || runtime.Int("end") < runtime.Int("start") {
-			return common.FlagErrorf("invalid range: --start (%d) must be >= 0 and --end (%d) must be >= --start", runtime.Int("start"), runtime.Int("end"))
-		}
-		typ := strings.TrimSpace(runtime.Str("type"))
-		if typ == "" {
-			return common.FlagErrorf("--type is required (pixel / standard%s)", autoSuffix(dimension))
-		}
-		if dimension == "column" && typ == "auto" {
-			return common.FlagErrorf("--type auto is rows-only (column widths do not support auto-fit); use +rows-resize")
-		}
-		hasSize := runtime.Changed("size") && runtime.Int("size") > 0
-		if typ == "pixel" && !hasSize {
-			return common.FlagErrorf("--type pixel requires --size <px>")
-		}
-		if typ != "pixel" && hasSize {
-			return common.FlagErrorf("--size is only valid with --type pixel")
-		}
-		return nil
+		sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+		sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+		_, err = resizeInput(runtime, token, sheetID, sheetName, dimension)
+		return err
 	}
 }
 
@@ -297,14 +297,36 @@ func autoSuffix(dimension string) string {
 // exclusive end, so it is bumped by one here. dimRangeFull (not dimRange) is
 // used so a single row/column still emits "N:N" — resize_range rejects a bare
 // "N".
-func resizeInput(runtime flagView, token, sheetID, sheetName, dimension string) map[string]interface{} {
+func resizeInput(runtime flagView, token, sheetID, sheetName, dimension string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if !runtime.Changed("start") || !runtime.Changed("end") {
+		return nil, common.FlagErrorf("--start and --end are required")
+	}
+	if runtime.Int("start") < 0 || runtime.Int("end") < runtime.Int("start") {
+		return nil, common.FlagErrorf("invalid range: --start (%d) must be >= 0 and --end (%d) must be >= --start", runtime.Int("start"), runtime.Int("end"))
+	}
+	typ := strings.TrimSpace(runtime.Str("type"))
+	if typ == "" {
+		return nil, common.FlagErrorf("--type is required (pixel / standard%s)", autoSuffix(dimension))
+	}
+	if dimension == "column" && typ == "auto" {
+		return nil, common.FlagErrorf("--type auto is rows-only (column widths do not support auto-fit); use +rows-resize")
+	}
+	hasSize := runtime.Changed("size") && runtime.Int("size") > 0
+	if typ == "pixel" && !hasSize {
+		return nil, common.FlagErrorf("--type pixel requires --size <px>")
+	}
+	if typ != "pixel" && hasSize {
+		return nil, common.FlagErrorf("--size is only valid with --type pixel")
+	}
 	rangeStr := dimRangeFull(dimension, runtime.Int("start"), runtime.Int("end")+1)
 	input := map[string]interface{}{
 		"excel_id": token,
 		"range":    rangeStr,
 	}
 	sheetSelectorForToolInput(input, sheetID, sheetName)
-	typ := strings.TrimSpace(runtime.Str("type"))
 	sizeBlock := map[string]interface{}{"type": typ}
 	if typ == "pixel" {
 		sizeBlock["value"] = runtime.Int("size")
@@ -314,7 +336,7 @@ func resizeInput(runtime flagView, token, sheetID, sheetName, dimension string) 
 	} else {
 		input["resize_width"] = sizeBlock
 	}
-	return input
+	return input, nil
 }
 
 // ─── transform_range (4 shortcuts) ────────────────────────────────────
@@ -334,7 +356,7 @@ var RangeMove = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+range-move"),
-	Validate:    validateRangeMoveOrCopy,
+	Validate:    validateRangeMoveOrCopy("move", false),
 	DryRun:      transformDryRunFn("move", false, false),
 	Execute:     transformExecuteFn("move", false, false),
 }
@@ -350,7 +372,7 @@ var RangeCopy = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+range-copy"),
-	Validate:    validateRangeMoveOrCopy,
+	Validate:    validateRangeMoveOrCopy("copy", true),
 	DryRun:      transformDryRunFn("copy", true, false),
 	Execute:     transformExecuteFn("copy", true, false),
 }
@@ -368,25 +390,12 @@ var RangeFill = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+range-fill"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if strings.TrimSpace(runtime.Str("source-range")) == "" {
-			return common.FlagErrorf("--source-range is required")
-		}
-		if strings.TrimSpace(runtime.Str("target-range")) == "" {
-			return common.FlagErrorf("--target-range is required")
-		}
-		return nil
-	},
+	Validate:    validateViaInput(rangeFillInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "transform_range", rangeFillInput(runtime, token, sheetID, sheetName))
+		input, _ := rangeFillInput(runtime, token, sheetID, sheetName)
+		return invokeToolDryRun(token, ToolKindWrite, "transform_range", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -397,7 +406,11 @@ var RangeFill = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "transform_range", rangeFillInput(runtime, token, sheetID, sheetName))
+		input, err := rangeFillInput(runtime, token, sheetID, sheetName)
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "transform_range", input)
 		if err != nil {
 			return err
 		}
@@ -416,21 +429,7 @@ var RangeSort = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+range-sort"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if strings.TrimSpace(runtime.Str("range")) == "" {
-			return common.FlagErrorf("--range is required")
-		}
-		if _, err := requireJSONArray(runtime, "sort-keys"); err != nil {
-			return err
-		}
-		return nil
-	},
+	Validate:    validateViaInput(rangeSortInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
@@ -461,28 +460,28 @@ var RangeSort = common.Shortcut{
 
 // ─── transform_range helpers ──────────────────────────────────────────
 
-func validateRangeMoveOrCopy(ctx context.Context, runtime *common.RuntimeContext) error {
-	if _, err := resolveSpreadsheetToken(runtime); err != nil {
+// validateRangeMoveOrCopy wires the standalone Validate to transformMoveCopyInput
+// so missing --source-range / --target-range fire the same friendly error on
+// the batch sub-op path.
+func validateRangeMoveOrCopy(op string, withPasteType bool) func(ctx context.Context, runtime *common.RuntimeContext) error {
+	return func(ctx context.Context, runtime *common.RuntimeContext) error {
+		token, err := resolveSpreadsheetToken(runtime)
+		if err != nil {
+			return err
+		}
+		sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+		sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+		_, err = transformMoveCopyInput(runtime, token, sheetID, sheetName, op, withPasteType)
 		return err
 	}
-	if _, _, err := resolveSheetSelector(runtime); err != nil {
-		return err
-	}
-	if strings.TrimSpace(runtime.Str("source-range")) == "" {
-		return common.FlagErrorf("--source-range is required")
-	}
-	if strings.TrimSpace(runtime.Str("target-range")) == "" {
-		return common.FlagErrorf("--target-range is required")
-	}
-	return nil
 }
 
 func transformDryRunFn(op string, withPasteType, _ bool) func(context.Context, *common.RuntimeContext) *common.DryRunAPI {
 	return func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "transform_range",
-			transformMoveCopyInput(runtime, token, sheetID, sheetName, op, withPasteType))
+		input, _ := transformMoveCopyInput(runtime, token, sheetID, sheetName, op, withPasteType)
+		return invokeToolDryRun(token, ToolKindWrite, "transform_range", input)
 	}
 }
 
@@ -496,8 +495,11 @@ func transformExecuteFn(op string, withPasteType, _ bool) func(context.Context, 
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "transform_range",
-			transformMoveCopyInput(runtime, token, sheetID, sheetName, op, withPasteType))
+		input, err := transformMoveCopyInput(runtime, token, sheetID, sheetName, op, withPasteType)
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "transform_range", input)
 		if err != nil {
 			return err
 		}
@@ -506,7 +508,16 @@ func transformExecuteFn(op string, withPasteType, _ bool) func(context.Context, 
 	}
 }
 
-func transformMoveCopyInput(runtime flagView, token, sheetID, sheetName, op string, withPasteType bool) map[string]interface{} {
+func transformMoveCopyInput(runtime flagView, token, sheetID, sheetName, op string, withPasteType bool) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("source-range")) == "" {
+		return nil, common.FlagErrorf("--source-range is required")
+	}
+	if strings.TrimSpace(runtime.Str("target-range")) == "" {
+		return nil, common.FlagErrorf("--target-range is required")
+	}
 	input := map[string]interface{}{
 		"excel_id":          token,
 		"operation":         op,
@@ -522,7 +533,7 @@ func transformMoveCopyInput(runtime flagView, token, sheetID, sheetName, op stri
 			input["paste_type"] = pasteTypeToTool(pt)
 		}
 	}
-	return input
+	return input, nil
 }
 
 // pasteTypeToTool maps the CLI vocabulary (values / formulas / formats / all)
@@ -539,7 +550,16 @@ func pasteTypeToTool(pt string) string {
 	return "all"
 }
 
-func rangeFillInput(runtime flagView, token, sheetID, sheetName string) map[string]interface{} {
+func rangeFillInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("source-range")) == "" {
+		return nil, common.FlagErrorf("--source-range is required")
+	}
+	if strings.TrimSpace(runtime.Str("target-range")) == "" {
+		return nil, common.FlagErrorf("--target-range is required")
+	}
 	input := map[string]interface{}{
 		"excel_id":          token,
 		"operation":         "fill",
@@ -548,7 +568,7 @@ func rangeFillInput(runtime flagView, token, sheetID, sheetName string) map[stri
 		"fill_type":         fillSeriesToToolType(runtime.Str("series-type")),
 	}
 	sheetSelectorForToolInput(input, sheetID, sheetName)
-	return input
+	return input, nil
 }
 
 // fillSeriesToToolType maps the CLI series vocabulary to the tool's fill_type.
@@ -563,6 +583,12 @@ func fillSeriesToToolType(seriesType string) string {
 }
 
 func rangeSortInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("range")) == "" {
+		return nil, common.FlagErrorf("--range is required")
+	}
 	keys, err := requireJSONArray(runtime, "sort-keys")
 	if err != nil {
 		return nil, err

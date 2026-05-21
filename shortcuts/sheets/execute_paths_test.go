@@ -242,7 +242,7 @@ func TestExecute_BatchUpdate_Translated(t *testing.T) {
 	stub := toolOutputStub(testToken, "write", `{"results":[{"ok":true}]}`)
 	_, err := runShortcutWithStubs(t, BatchUpdate, []string{
 		"--url", testURL,
-		"--operations", `[{"shortcut":"+cells-set","input":{"range":"A1","cells":[[{"value":1}]]}}]`,
+		"--operations", `[{"shortcut":"+cells-set","input":{"sheet-id":"sh1","range":"A1","cells":[[{"value":1}]]}}]`,
 		"--continue-on-error",
 		"--yes",
 	}, stub)

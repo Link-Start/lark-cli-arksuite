@@ -89,15 +89,19 @@ func TestObjectCRUDShortcuts_DryRun(t *testing.T) {
 				"pivot_table_id": "ptA",
 			},
 		},
-		// cond-format — --rule-id rename + --rule-type / --ranges hoist
+		// cond-format — --rule-id rename + --rule-type / --ranges hoist.
+		// rule_type lives at properties.rule_type (flat string), not nested
+		// under a `rule` object; enum vocabulary matches server schema
+		// (cellIs / duplicateValues / ... — see mcp-tools.json
+		// manage_conditional_format_object.properties.rule_type).
 		{
 			name: "+cond-format-update id rename + rule-type/ranges",
 			sc:   CondFormatUpdate,
 			args: []string{
 				"--url", testURL, "--sheet-id", testSheetID,
 				"--rule-id", "ruleA",
-				"--properties", `{"rule":{"operator":"greater_than","value":100}}`,
-				"--rule-type", "cellValue",
+				"--properties", `{"attrs":[{"operator":"greaterThan","value":"100"}],"style":{"back_color":"#FFD7D7"}}`,
+				"--rule-type", "cellIs",
 				"--ranges", `["A1:A100"]`,
 			},
 			toolName: "manage_conditional_format_object",
@@ -107,8 +111,10 @@ func TestObjectCRUDShortcuts_DryRun(t *testing.T) {
 				"operation":             "update",
 				"conditional_format_id": "ruleA",
 				"properties": map[string]interface{}{
-					"rule":   map[string]interface{}{"operator": "greater_than", "value": float64(100), "type": "cellValue"},
-					"ranges": []interface{}{"A1:A100"},
+					"rule_type": "cellIs",
+					"attrs":     []interface{}{map[string]interface{}{"operator": "greaterThan", "value": "100"}},
+					"style":     map[string]interface{}{"back_color": "#FFD7D7"},
+					"ranges":    []interface{}{"A1:A100"},
 				},
 			},
 		},
@@ -138,14 +144,41 @@ func TestObjectCRUDShortcuts_DryRun(t *testing.T) {
 			},
 		},
 		{
-			name:     "+filter-delete (no id flag, sheet-scoped)",
+			// +filter-delete has no separate --filter-id flag because the
+			// server contract sets filter_id === sheet_id; the translator
+			// auto-injects filter_id from --sheet-id. update/delete fail
+			// hard when only --sheet-name is given (no mid-call lookup).
+			name:     "+filter-delete (sheet-scoped, auto-injects filter_id=sheet_id)",
 			sc:       FilterDelete,
 			args:     []string{"--url", testURL, "--sheet-id", testSheetID},
 			toolName: "manage_filter_object",
 			wantInput: map[string]interface{}{
 				"excel_id":  testToken,
 				"sheet_id":  testSheetID,
+				"filter_id": testSheetID,
 				"operation": "delete",
+			},
+		},
+		{
+			// +filter-update auto-injects filter_id from sheet_id, hoists
+			// --range out of properties, and merges properties.rules.
+			name: "+filter-update auto-injects filter_id, hoists --range",
+			sc:   FilterUpdate,
+			args: []string{
+				"--url", testURL, "--sheet-id", testSheetID,
+				"--range", "A1:F1000",
+				"--properties", `{"rules":[{"col":"B"}]}`,
+			},
+			toolName: "manage_filter_object",
+			wantInput: map[string]interface{}{
+				"excel_id":  testToken,
+				"sheet_id":  testSheetID,
+				"filter_id": testSheetID,
+				"operation": "update",
+				"properties": map[string]interface{}{
+					"range": "A1:F1000",
+					"rules": []interface{}{map[string]interface{}{"col": "B"}},
+				},
 			},
 		},
 		// filter-view CRUD (cli-only via callTool)

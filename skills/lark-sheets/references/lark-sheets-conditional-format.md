@@ -96,7 +96,7 @@ _公共四件套 · 系统：`--dry-run`_
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `--properties` | string + File + Stdin（复合 JSON） | required | 规则配置 JSON，含 `style`（命中样式，必填）和 `attrs?`（规则参数列表，因 `rule_type` 不同结构而异）/ `has_ref?`。`rule_type` 和 `ranges` 已拎为独立 flag |
-| `--rule-type` | string | required | 条件格式规则类型；优先级高于 `--properties` 中同名字段（可选值：`cellValue` / `formula` / `duplicate` / `unique` / `topBottom` / `aboveBelowAverage` / `dataBar` / `colorScale` / `iconSet` / `textContains` / `dateOccurring` / `blankCell` / `errorCell`） |
+| `--rule-type` | string | required | 条件格式规则类型；优先级高于 `--properties` 中同名字段（可选值：`duplicateValues` / `uniqueValues` / `cellIs` / `containsText` / `timePeriod` / `containsBlanks` / `notContainsBlanks` / `dataBar` / `colorScale` / `rank` / `aboveAverage` / `expression` / `iconSet`） |
 | `--ranges` | string + File + Stdin（简单 JSON） | required | 应用条件格式的 A1 范围 JSON 数组（如 `["A1:A100","C2:C50"]`）；优先级高于 `--properties` 中同名字段 |
 
 ### `+cond-format-update`
@@ -107,7 +107,7 @@ _公共四件套 · 系统：`--dry-run`_
 | --- | --- | --- | --- |
 | `--rule-id` | string | required | 目标规则 id |
 | `--properties` | string + File + Stdin（复合 JSON） | required | 规则配置 JSON，结构同 `+cond-format-create` 的 `--properties`；update 是整组覆盖式 |
-| `--rule-type` | string | required | 条件格式规则类型；优先级高于 `--properties` 中同名字段（可选值：`cellValue` / `formula` / `duplicate` / `unique` / `topBottom` / `aboveBelowAverage` / `dataBar` / `colorScale` / `iconSet` / `textContains` / `dateOccurring` / `blankCell` / `errorCell`） |
+| `--rule-type` | string | required | 条件格式规则类型；优先级高于 `--properties` 中同名字段（可选值：`duplicateValues` / `uniqueValues` / `cellIs` / `containsText` / `timePeriod` / `containsBlanks` / `notContainsBlanks` / `dataBar` / `colorScale` / `rank` / `aboveAverage` / `expression` / `iconSet`） |
 | `--ranges` | string + File + Stdin（简单 JSON） | required | 应用条件格式的 A1 范围 JSON 数组（如 `["A1:A100","C2:C50"]`）；优先级高于 `--properties` 中同名字段 |
 
 ### `+cond-format-delete`

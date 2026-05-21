@@ -43,21 +43,7 @@ var CellsSet = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+cells-set"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if strings.TrimSpace(runtime.Str("range")) == "" {
-			return common.FlagErrorf("--range is required")
-		}
-		if _, err := requireJSONArray(runtime, "cells"); err != nil {
-			return err
-		}
-		return nil
-	},
+	Validate:    validateViaInput(cellsSetInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
@@ -87,6 +73,12 @@ var CellsSet = common.Shortcut{
 }
 
 func cellsSetInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("range")) == "" {
+		return nil, common.FlagErrorf("--range is required")
+	}
 	cells, err := requireJSONArray(runtime, "cells")
 	if err != nil {
 		return nil, err
@@ -118,28 +110,7 @@ var CellsSetStyle = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+cells-set-style"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		r := strings.TrimSpace(runtime.Str("range"))
-		if r == "" {
-			return common.FlagErrorf("--range is required")
-		}
-		if _, _, err := rangeDimensions(r); err != nil {
-			return common.FlagErrorf("--range %q: %v", r, err)
-		}
-		if err := requireAnyStyleFlag(runtime); err != nil {
-			return err
-		}
-		if _, err := borderStylesFromFlag(runtime); err != nil {
-			return err
-		}
-		return nil
-	},
+	Validate:    validateViaInput(cellsSetStyleInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
@@ -169,10 +140,19 @@ var CellsSetStyle = common.Shortcut{
 }
 
 func cellsSetStyleInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
 	rangeStr := strings.TrimSpace(runtime.Str("range"))
+	if rangeStr == "" {
+		return nil, common.FlagErrorf("--range is required")
+	}
 	rows, cols, err := rangeDimensions(rangeStr)
 	if err != nil {
 		return nil, common.FlagErrorf("--range %q: %v", rangeStr, err)
+	}
+	if err := requireAnyStyleFlag(runtime); err != nil {
+		return nil, err
 	}
 	cellStyle := buildCellStyleFromFlags(runtime)
 	borderStyles, err := borderStylesFromFlag(runtime)
@@ -214,29 +194,12 @@ var CsvPut = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+csv-put"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if strings.TrimSpace(runtime.Str("csv")) == "" {
-			return common.FlagErrorf("--csv is required")
-		}
-		anchor := strings.TrimSpace(runtime.Str("start-cell"))
-		if anchor == "" {
-			return common.FlagErrorf("--start-cell is required")
-		}
-		if _, _, ok := splitCellRef(anchor); !ok {
-			return common.FlagErrorf("--start-cell %q must be a single cell ref (e.g. A1)", anchor)
-		}
-		return nil
-	},
+	Validate:    validateViaInput(csvPutInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "set_range_from_csv", csvPutInput(runtime, token, sheetID, sheetName))
+		input, _ := csvPutInput(runtime, token, sheetID, sheetName)
+		return invokeToolDryRun(token, ToolKindWrite, "set_range_from_csv", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -247,7 +210,11 @@ var CsvPut = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "set_range_from_csv", csvPutInput(runtime, token, sheetID, sheetName))
+		input, err := csvPutInput(runtime, token, sheetID, sheetName)
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "set_range_from_csv", input)
 		if err != nil {
 			return err
 		}
@@ -256,17 +223,30 @@ var CsvPut = common.Shortcut{
 	},
 }
 
-func csvPutInput(runtime flagView, token, sheetID, sheetName string) map[string]interface{} {
+func csvPutInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("csv")) == "" {
+		return nil, common.FlagErrorf("--csv is required")
+	}
+	anchor := strings.TrimSpace(runtime.Str("start-cell"))
+	if anchor == "" {
+		return nil, common.FlagErrorf("--start-cell is required")
+	}
+	if _, _, ok := splitCellRef(anchor); !ok {
+		return nil, common.FlagErrorf("--start-cell %q must be a single cell ref (e.g. A1)", anchor)
+	}
 	input := map[string]interface{}{
 		"excel_id":   token,
 		"csv":        runtime.Str("csv"),
-		"start_cell": strings.TrimSpace(runtime.Str("start-cell")),
+		"start_cell": anchor,
 	}
 	sheetSelectorForToolInput(input, sheetID, sheetName)
 	if !runtime.Bool("allow-overwrite") {
 		input["allow_overwrite"] = false
 	}
-	return input
+	return input, nil
 }
 
 // ─── +dropdown-* (set_cell_range via data_validation) ─────────────────
@@ -285,25 +265,7 @@ var DropdownSet = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+dropdown-set"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		r := strings.TrimSpace(runtime.Str("range"))
-		if r == "" {
-			return common.FlagErrorf("--range is required")
-		}
-		if _, _, err := rangeDimensions(r); err != nil {
-			return common.FlagErrorf("--range %q: %v", r, err)
-		}
-		if _, err := validateDropdownOptionsColors(runtime); err != nil {
-			return err
-		}
-		return nil
-	},
+	Validate:    validateViaInput(dropdownSetInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
@@ -333,14 +295,20 @@ var DropdownSet = common.Shortcut{
 }
 
 func dropdownSetInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
-	validation, err := buildDropdownValidation(runtime)
-	if err != nil {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
 		return nil, err
 	}
 	rangeStr := strings.TrimSpace(runtime.Str("range"))
+	if rangeStr == "" {
+		return nil, common.FlagErrorf("--range is required")
+	}
 	rows, cols, err := rangeDimensions(rangeStr)
 	if err != nil {
 		return nil, common.FlagErrorf("--range %q: %v", rangeStr, err)
+	}
+	validation, err := buildDropdownValidation(runtime)
+	if err != nil {
+		return nil, err
 	}
 	cells := fillCellsMatrix(rows, cols, map[string]interface{}{"data_validation": validation})
 	input := map[string]interface{}{
@@ -390,8 +358,8 @@ func buildDropdownValidation(runtime flagView) (map[string]interface{}, error) {
 }
 
 // validateDropdownOptionsColors validates --options is a JSON array and that
-// --colors (when set) has matching length. Used by +dropdown-set Validate.
-func validateDropdownOptionsColors(runtime *common.RuntimeContext) (int, error) {
+// --colors (when set) has matching length. Used by +dropdown-update Validate.
+func validateDropdownOptionsColors(runtime flagView) (int, error) {
 	options, err := requireJSONArray(runtime, "options")
 	if err != nil {
 		return 0, err

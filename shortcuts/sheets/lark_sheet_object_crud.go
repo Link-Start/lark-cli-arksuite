@@ -58,13 +58,13 @@ func newObjectCreateShortcut(spec objectCRUDSpec) common.Shortcut {
 		HasFormat:   true,
 		Flags:       flags,
 		Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-			if _, err := resolveSpreadsheetToken(runtime); err != nil {
+			token, err := resolveSpreadsheetToken(runtime)
+			if err != nil {
 				return err
 			}
-			if _, _, err := resolveSheetSelector(runtime); err != nil {
-				return err
-			}
-			_, err := requireJSONObject(runtime, "properties")
+			sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+			sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+			_, err = objectCreateInput(runtime, token, sheetID, sheetName, spec)
 			return err
 		},
 		DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
@@ -97,6 +97,9 @@ func newObjectCreateShortcut(spec objectCRUDSpec) common.Shortcut {
 }
 
 func objectCreateInput(runtime flagView, token, sheetID, sheetName string, spec objectCRUDSpec) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
 	props, err := requireJSONObject(runtime, "properties")
 	if err != nil {
 		return nil, err
@@ -125,16 +128,13 @@ func newObjectUpdateShortcut(spec objectCRUDSpec) common.Shortcut {
 		HasFormat:   true,
 		Flags:       flags,
 		Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-			if _, err := resolveSpreadsheetToken(runtime); err != nil {
+			token, err := resolveSpreadsheetToken(runtime)
+			if err != nil {
 				return err
 			}
-			if _, _, err := resolveSheetSelector(runtime); err != nil {
-				return err
-			}
-			if spec.idFlag != "" && strings.TrimSpace(runtime.Str(spec.idFlag)) == "" {
-				return common.FlagErrorf("--%s is required", spec.idFlag)
-			}
-			_, err := requireJSONObject(runtime, "properties")
+			sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+			sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+			_, err = objectUpdateInput(runtime, token, sheetID, sheetName, spec)
 			return err
 		},
 		DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
@@ -167,6 +167,12 @@ func newObjectUpdateShortcut(spec objectCRUDSpec) common.Shortcut {
 }
 
 func objectUpdateInput(runtime flagView, token, sheetID, sheetName string, spec objectCRUDSpec) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if spec.idFlag != "" && strings.TrimSpace(runtime.Str(spec.idFlag)) == "" {
+		return nil, common.FlagErrorf("--%s is required", spec.idFlag)
+	}
 	props, err := requireJSONObject(runtime, "properties")
 	if err != nil {
 		return nil, err
@@ -198,21 +204,20 @@ func newObjectDeleteShortcut(spec objectCRUDSpec) common.Shortcut {
 		HasFormat:   true,
 		Flags:       flags,
 		Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-			if _, err := resolveSpreadsheetToken(runtime); err != nil {
+			token, err := resolveSpreadsheetToken(runtime)
+			if err != nil {
 				return err
 			}
-			if _, _, err := resolveSheetSelector(runtime); err != nil {
-				return err
-			}
-			if spec.idFlag != "" && strings.TrimSpace(runtime.Str(spec.idFlag)) == "" {
-				return common.FlagErrorf("--%s is required", spec.idFlag)
-			}
-			return nil
+			sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+			sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+			_, err = objectDeleteInput(runtime, token, sheetID, sheetName, spec)
+			return err
 		},
 		DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 			token, _ := resolveSpreadsheetToken(runtime)
 			sheetID, sheetName, _ := resolveSheetSelector(runtime)
-			return invokeToolDryRun(token, ToolKindWrite, spec.toolName, objectDeleteInput(runtime, token, sheetID, sheetName, spec))
+			input, _ := objectDeleteInput(runtime, token, sheetID, sheetName, spec)
+			return invokeToolDryRun(token, ToolKindWrite, spec.toolName, input)
 		},
 		Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 			token, err := resolveSpreadsheetToken(runtime)
@@ -223,7 +228,11 @@ func newObjectDeleteShortcut(spec objectCRUDSpec) common.Shortcut {
 			if err != nil {
 				return err
 			}
-			out, err := callTool(ctx, runtime, token, ToolKindWrite, spec.toolName, objectDeleteInput(runtime, token, sheetID, sheetName, spec))
+			input, err := objectDeleteInput(runtime, token, sheetID, sheetName, spec)
+			if err != nil {
+				return err
+			}
+			out, err := callTool(ctx, runtime, token, ToolKindWrite, spec.toolName, input)
 			if err != nil {
 				return err
 			}
@@ -233,7 +242,13 @@ func newObjectDeleteShortcut(spec objectCRUDSpec) common.Shortcut {
 	}
 }
 
-func objectDeleteInput(runtime flagView, token, sheetID, sheetName string, spec objectCRUDSpec) map[string]interface{} {
+func objectDeleteInput(runtime flagView, token, sheetID, sheetName string, spec objectCRUDSpec) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if spec.idFlag != "" && strings.TrimSpace(runtime.Str(spec.idFlag)) == "" {
+		return nil, common.FlagErrorf("--%s is required", spec.idFlag)
+	}
 	input := map[string]interface{}{
 		"excel_id":  token,
 		"operation": "delete",
@@ -242,7 +257,7 @@ func objectDeleteInput(runtime flagView, token, sheetID, sheetName string, spec 
 	if spec.idFlag != "" {
 		input[spec.idField] = strings.TrimSpace(runtime.Str(spec.idFlag))
 	}
-	return input
+	return input, nil
 }
 
 // ─── per-object instantiations ────────────────────────────────────────
@@ -399,16 +414,13 @@ func newFloatImageWriteShortcut(command, description, op string, withIDFlag, isH
 		HasFormat:   true,
 		Flags:       flags,
 		Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-			if _, err := resolveSpreadsheetToken(runtime); err != nil {
+			token, err := resolveSpreadsheetToken(runtime)
+			if err != nil {
 				return err
 			}
-			if _, _, err := resolveSheetSelector(runtime); err != nil {
-				return err
-			}
-			if withIDFlag && strings.TrimSpace(runtime.Str("float-image-id")) == "" {
-				return common.FlagErrorf("--float-image-id is required")
-			}
-			_, err := floatImageProperties(runtime)
+			sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+			sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+			_, err = floatImageWriteInput(runtime, token, sheetID, sheetName, op, withIDFlag)
 			return err
 		},
 		DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
@@ -441,6 +453,12 @@ func newFloatImageWriteShortcut(command, description, op string, withIDFlag, isH
 }
 
 func floatImageWriteInput(runtime flagView, token, sheetID, sheetName, op string, withIDFlag bool) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if withIDFlag && strings.TrimSpace(runtime.Str("float-image-id")) == "" {
+		return nil, common.FlagErrorf("--float-image-id is required")
+	}
 	props, err := floatImageProperties(runtime)
 	if err != nil {
 		return nil, err
@@ -525,23 +543,7 @@ var FilterCreate = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+filter-create"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if strings.TrimSpace(runtime.Str("range")) == "" {
-			return common.FlagErrorf("--range is required")
-		}
-		if runtime.Str("properties") != "" {
-			if _, err := requireJSONObject(runtime, "properties"); err != nil {
-				return err
-			}
-		}
-		return nil
-	},
+	Validate:    validateViaInput(filterCreateInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
@@ -571,6 +573,12 @@ var FilterCreate = common.Shortcut{
 }
 
 func filterCreateInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("range")) == "" {
+		return nil, common.FlagErrorf("--range is required")
+	}
 	props := map[string]interface{}{
 		"range": strings.TrimSpace(runtime.Str("range")),
 	}
@@ -607,19 +615,7 @@ var FilterUpdate = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+filter-update"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if strings.TrimSpace(runtime.Str("range")) == "" {
-			return common.FlagErrorf("--range is required")
-		}
-		_, err := requireJSONObject(runtime, "properties")
-		return err
-	},
+	Validate:    validateViaInput(filterUpdateInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
@@ -649,6 +645,12 @@ var FilterUpdate = common.Shortcut{
 }
 
 func filterUpdateInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("range")) == "" {
+		return nil, common.FlagErrorf("--range is required")
+	}
 	props, err := requireJSONObject(runtime, "properties")
 	if err != nil {
 		return nil, err
@@ -674,18 +676,11 @@ var FilterDelete = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+filter-delete"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		_, _, err := resolveSheetSelector(runtime)
-		return err
-	},
+	Validate:    validateViaInput(filterDeleteInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		input := map[string]interface{}{"excel_id": token, "operation": "delete"}
-		sheetSelectorForToolInput(input, sheetID, sheetName)
+		input, _ := filterDeleteInput(runtime, token, sheetID, sheetName)
 		return invokeToolDryRun(token, ToolKindWrite, "manage_filter_object", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
@@ -697,8 +692,10 @@ var FilterDelete = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		input := map[string]interface{}{"excel_id": token, "operation": "delete"}
-		sheetSelectorForToolInput(input, sheetID, sheetName)
+		input, err := filterDeleteInput(runtime, token, sheetID, sheetName)
+		if err != nil {
+			return err
+		}
 		out, err := callTool(ctx, runtime, token, ToolKindWrite, "manage_filter_object", input)
 		if err != nil {
 			return err
@@ -706,4 +703,15 @@ var FilterDelete = common.Shortcut{
 		runtime.Out(out, nil)
 		return nil
 	},
+}
+
+// filterDeleteInput mirrors the standalone +filter-delete body for batch
+// sub-op reuse. filter_id is implicit (sheet-scoped), so no extra id flag.
+func filterDeleteInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	input := map[string]interface{}{"excel_id": token, "operation": "delete"}
+	sheetSelectorForToolInput(input, sheetID, sheetName)
+	return input, nil
 }

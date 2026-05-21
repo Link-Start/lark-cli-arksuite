@@ -6,6 +6,7 @@ package sheets
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/larksuite/cli/shortcuts/common"
@@ -312,6 +313,232 @@ func jsonRoundTrip(t *testing.T, m map[string]interface{}) map[string]interface{
 		t.Fatalf("unmarshal: %v", err)
 	}
 	return out
+}
+
+// TestBatchOp_ErrorEquivalence is the second half of the contract: for the
+// same bad input, the standalone shortcut Validate and the +batch-update
+// sub-op translator must emit the same friendly CLI error. Previously a
+// sub-op that omitted --sheet-id (or another required flag) slipped through
+// to the server and surfaced as "sheet undefined not found"; with the
+// validation pushed down into the xxxInput builders both paths now stop the
+// request before the API call.
+//
+// Scope: this test covers checks that cobra cannot enforce — XOR pairs
+// (sheet selector, image token/uri), range relationships, enum-bound rules,
+// pixel/size cross-flag coupling. cobra's own MarkFlagRequired catches the
+// single-required cases on the standalone path with its own
+// "required flag(s) \"X\" not set" wording; the batch path now catches the
+// same situations with our friendlier "--X is required" wording — those are
+// asserted by TestBatchOp_RejectsBadSubOpInput below.
+func TestBatchOp_ErrorEquivalence(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		// shortcut & standalone args. --url is supplied by the runner. Args
+		// satisfy every cobra-required flag so cobra doesn't short-circuit
+		// before our shared validator runs.
+		shortcut common.Shortcut
+		args     []string
+		// matching sub-op input; reach the same failing check.
+		subShortcut string
+		subInput    string
+		// substring expected in both errors. We assert *contains* rather than
+		// equality because the batch path wraps the inner error with
+		// "operations[i] (<name>): " context — the inner message must match.
+		wantContains string
+	}{
+		{
+			name:         "+cells-set missing sheet selector",
+			shortcut:     CellsSet,
+			args:         []string{"--range", "A1", "--cells", `[[{"value":"x"}]]`},
+			subShortcut:  "+cells-set",
+			subInput:     `{"range":"A1","cells":[[{"value":"x"}]]}`,
+			wantContains: "specify at least one of --sheet-id or --sheet-name",
+		},
+		{
+			name:         "+cells-set both sheet-id and sheet-name",
+			shortcut:     CellsSet,
+			args:         []string{"--sheet-id", "sh1", "--sheet-name", "Sheet1", "--range", "A1", "--cells", `[[{"value":"x"}]]`},
+			subShortcut:  "+cells-set",
+			subInput:     `{"sheet-id":"sh1","sheet-name":"Sheet1","range":"A1","cells":[[{"value":"x"}]]}`,
+			wantContains: "mutually exclusive",
+		},
+		{
+			name:         "+dim-insert missing sheet selector",
+			shortcut:     DimInsert,
+			args:         []string{"--dimension", "row", "--start", "0", "--end", "1"},
+			subShortcut:  "+dim-insert",
+			subInput:     `{"dimension":"row","start":0,"end":1}`,
+			wantContains: "specify at least one of --sheet-id or --sheet-name",
+		},
+		{
+			name:         "+dim-insert --end <= --start",
+			shortcut:     DimInsert,
+			args:         []string{"--sheet-id", "sh1", "--dimension", "row", "--start", "5", "--end", "3"},
+			subShortcut:  "+dim-insert",
+			subInput:     `{"sheet-id":"sh1","dimension":"row","start":5,"end":3}`,
+			wantContains: "must be greater than --start",
+		},
+		{
+			name:         "+rows-resize --type pixel without --size",
+			shortcut:     RowsResize,
+			args:         []string{"--sheet-id", "sh1", "--start", "0", "--end", "1", "--type", "pixel"},
+			subShortcut:  "+rows-resize",
+			subInput:     `{"sheet-id":"sh1","start":0,"end":1,"type":"pixel"}`,
+			wantContains: "--type pixel requires --size",
+		},
+		{
+			name:         "+sheet-delete missing sheet selector",
+			shortcut:     SheetDelete,
+			args:         []string{},
+			subShortcut:  "+sheet-delete",
+			subInput:     `{}`,
+			wantContains: "specify at least one of --sheet-id or --sheet-name",
+		},
+		{
+			name:         "+float-image-create both image-token and image-uri",
+			shortcut:     FloatImageCreate,
+			args:         []string{"--sheet-id", "sh1", "--image-name", "x.png", "--image-token", "t", "--image-uri", "u", "--position-row", "0", "--position-col", "A", "--size-width", "100", "--size-height", "50"},
+			subShortcut:  "+float-image-create",
+			subInput:     `{"sheet-id":"sh1","image-name":"x.png","image-token":"t","image-uri":"u","position-row":0,"position-col":"A","size-width":100,"size-height":50}`,
+			wantContains: "mutually exclusive",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Standalone path: run the shortcut with --dry-run + bad args.
+			// Validate runs before DryRun, so we expect it to fail there.
+			_, _, standaloneErr := runShortcutCapturingErr(
+				t, tc.shortcut,
+				append([]string{"--url", testURL, "--dry-run"}, tc.args...),
+			)
+			if standaloneErr == nil {
+				t.Fatalf("standalone Validate accepted bad input — expected error containing %q", tc.wantContains)
+			}
+			if !strings.Contains(standaloneErr.Error(), tc.wantContains) {
+				t.Errorf("standalone error = %q, want substring %q", standaloneErr.Error(), tc.wantContains)
+			}
+
+			// Batch path: translate the matching sub-op. The translator wraps
+			// the inner error with "operations[i] (<shortcut>): " — assert the
+			// inner message survives the wrap.
+			var subInput map[string]interface{}
+			if err := json.Unmarshal([]byte(tc.subInput), &subInput); err != nil {
+				t.Fatalf("bad subInput JSON: %v", err)
+			}
+			rawOp := map[string]interface{}{
+				"shortcut": tc.subShortcut,
+				"input":    subInput,
+			}
+			_, batchErr := translateBatchOp(rawOp, testToken, 0)
+			if batchErr == nil {
+				t.Fatalf("batch translator accepted bad input — expected error containing %q", tc.wantContains)
+			}
+			if !strings.Contains(batchErr.Error(), tc.wantContains) {
+				t.Errorf("batch error = %q, want substring %q (operations[i] prefix is fine)", batchErr.Error(), tc.wantContains)
+			}
+			// And the wrap context must include the sub-op index + shortcut
+			// name so error reports stay actionable in multi-op batches.
+			wrapHint := "operations[0] (" + tc.subShortcut + "):"
+			if !strings.Contains(batchErr.Error(), wrapHint) {
+				t.Errorf("batch error %q missing context prefix %q", batchErr.Error(), wrapHint)
+			}
+		})
+	}
+}
+
+// TestBatchOp_RejectsBadSubOpInput pins down the secondary guard: for
+// inputs that cobra's MarkFlagRequired catches on the standalone path,
+// the +batch-update sub-op (which has no cobra layer) must still reject
+// CLI-side with its own friendly error before issuing any API call. This
+// closes the original bug — a sub-op missing --sheet-id used to slip
+// through and surface as "sheet undefined not found" only after a
+// network round-trip.
+func TestBatchOp_RejectsBadSubOpInput(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		subShortcut  string
+		subInput     string
+		wantContains string
+	}{
+		{
+			"+cells-set missing --range",
+			"+cells-set",
+			`{"sheet-id":"sh1","cells":[[{"value":"x"}]]}`,
+			"--range is required",
+		},
+		{
+			"+dim-insert missing --dimension",
+			"+dim-insert",
+			`{"sheet-id":"sh1","start":0,"end":1}`,
+			"--dimension is required",
+		},
+		{
+			"+rows-resize missing --type",
+			"+rows-resize",
+			`{"sheet-id":"sh1","start":0,"end":0}`,
+			"--type is required",
+		},
+		{
+			"+range-copy missing --target-range",
+			"+range-copy",
+			`{"sheet-id":"sh1","source-range":"A1:B2"}`,
+			"--target-range is required",
+		},
+		{
+			"+sheet-rename missing --title",
+			"+sheet-rename",
+			`{"sheet-id":"sh1"}`,
+			"--title is required",
+		},
+		{
+			"+chart-update missing --chart-id",
+			"+chart-update",
+			`{"sheet-id":"sh1","properties":{"title":"T"}}`,
+			"--chart-id is required",
+		},
+		{
+			"+filter-create missing --range",
+			"+filter-create",
+			`{"sheet-id":"sh1"}`,
+			"--range is required",
+		},
+		{
+			"+float-image-update missing --float-image-id",
+			"+float-image-update",
+			`{"sheet-id":"sh1","image-name":"x.png","image-token":"t","position-row":0,"position-col":"A","size-width":100,"size-height":50}`,
+			"--float-image-id is required",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var subInput map[string]interface{}
+			if err := json.Unmarshal([]byte(tc.subInput), &subInput); err != nil {
+				t.Fatalf("bad subInput JSON: %v", err)
+			}
+			rawOp := map[string]interface{}{
+				"shortcut": tc.subShortcut,
+				"input":    subInput,
+			}
+			_, err := translateBatchOp(rawOp, testToken, 0)
+			if err == nil {
+				t.Fatalf("translator accepted bad input — expected error containing %q", tc.wantContains)
+			}
+			if !strings.Contains(err.Error(), tc.wantContains) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantContains)
+			}
+		})
+	}
 }
 
 // TestBatchOp_DispatchCoversReportedBugs is a focused guard for the two

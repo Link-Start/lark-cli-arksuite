@@ -43,13 +43,6 @@ type batchOpMapping struct {
 	translate batchTranslateFn
 }
 
-// noErrTranslate adapts a builder that cannot fail into a batchTranslateFn.
-func noErrTranslate(f func(fv flagView, token, sheetID, sheetName string) map[string]interface{}) batchTranslateFn {
-	return func(fv flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
-		return f(fv, token, sheetID, sheetName), nil
-	}
-}
-
 // objCreateTranslate / objUpdateTranslate / objDeleteTranslate bind an object
 // CRUD spec to the shared object_crud builders.
 func objCreateTranslate(spec objectCRUDSpec) batchTranslateFn {
@@ -66,80 +59,84 @@ func objUpdateTranslate(spec objectCRUDSpec) batchTranslateFn {
 
 func objDeleteTranslate(spec objectCRUDSpec) batchTranslateFn {
 	return func(fv flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
-		return objectDeleteInput(fv, token, sheetID, sheetName, spec), nil
+		return objectDeleteInput(fv, token, sheetID, sheetName, spec)
 	}
 }
 
 // batchOpDispatch covers every write shortcut that can join an atomic batch.
+// Each entry plugs the shortcut's standalone xxxInput builder into the
+// batch translator path — so the body is byte-identical to the standalone
+// invocation (locked by TestBatchOp_BodyMatchesStandalone) and the missing-
+// flag error is identical too (locked by TestBatchOp_ErrorEquivalence).
 var batchOpDispatch = map[string]batchOpMapping{
 	// ─── 单元格内容 ──────────────────────────────────────────────────
 	"+cells-set":       {"set_cell_range", cellsSetInput},
 	"+cells-set-style": {"set_cell_range", cellsSetStyleInput},
-	"+cells-clear":     {"clear_cell_range", noErrTranslate(cellsClearInput)},
-	"+cells-replace":   {"replace_data", noErrTranslate(replaceInput)},
-	"+csv-put":         {"set_range_from_csv", noErrTranslate(csvPutInput)},
+	"+cells-clear":     {"clear_cell_range", cellsClearInput},
+	"+cells-replace":   {"replace_data", replaceInput},
+	"+csv-put":         {"set_range_from_csv", csvPutInput},
 	"+dropdown-set":    {"set_cell_range", dropdownSetInput},
 
 	// ─── 单元格合并 (merge_cells, operation 区分) ────────────────────
 	"+cells-merge": {"merge_cells", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return mergeInput(fv, token, sid, sname, "merge", true), nil
+		return mergeInput(fv, token, sid, sname, "merge", true)
 	}},
 	"+cells-unmerge": {"merge_cells", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return mergeInput(fv, token, sid, sname, "unmerge", false), nil
+		return mergeInput(fv, token, sid, sname, "unmerge", false)
 	}},
 
 	// ─── 行列结构 (modify_sheet_structure, operation 区分) ──────────
-	"+dim-insert": {"modify_sheet_structure", noErrTranslate(dimInsertInput)},
+	"+dim-insert": {"modify_sheet_structure", dimInsertInput},
 	"+dim-delete": {"modify_sheet_structure", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return dimRangeOpInput(fv, token, sid, sname, "delete"), nil
+		return dimRangeOpInput(fv, token, sid, sname, "delete")
 	}},
 	"+dim-hide": {"modify_sheet_structure", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return dimRangeOpInput(fv, token, sid, sname, "hide"), nil
+		return dimRangeOpInput(fv, token, sid, sname, "hide")
 	}},
 	"+dim-unhide": {"modify_sheet_structure", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return dimRangeOpInput(fv, token, sid, sname, "unhide"), nil
+		return dimRangeOpInput(fv, token, sid, sname, "unhide")
 	}},
-	"+dim-freeze": {"modify_sheet_structure", noErrTranslate(dimFreezeInput)},
+	"+dim-freeze": {"modify_sheet_structure", dimFreezeInput},
 	"+dim-group": {"modify_sheet_structure", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return dimGroupInput(fv, token, sid, sname, "group"), nil
+		return dimGroupInput(fv, token, sid, sname, "group")
 	}},
 	"+dim-ungroup": {"modify_sheet_structure", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return dimGroupInput(fv, token, sid, sname, "ungroup"), nil
+		return dimGroupInput(fv, token, sid, sname, "ungroup")
 	}},
 
 	// ─── 行高列宽 (resize_range, 无 operation 字段) ─────────────────
 	"+rows-resize": {"resize_range", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return resizeInput(fv, token, sid, sname, "row"), nil
+		return resizeInput(fv, token, sid, sname, "row")
 	}},
 	"+cols-resize": {"resize_range", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return resizeInput(fv, token, sid, sname, "column"), nil
+		return resizeInput(fv, token, sid, sname, "column")
 	}},
 
 	// ─── 区域操作 (transform_range, operation 区分) ─────────────────
 	"+range-move": {"transform_range", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return transformMoveCopyInput(fv, token, sid, sname, "move", false), nil
+		return transformMoveCopyInput(fv, token, sid, sname, "move", false)
 	}},
 	"+range-copy": {"transform_range", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		return transformMoveCopyInput(fv, token, sid, sname, "copy", true), nil
+		return transformMoveCopyInput(fv, token, sid, sname, "copy", true)
 	}},
-	"+range-fill": {"transform_range", noErrTranslate(rangeFillInput)},
+	"+range-fill": {"transform_range", rangeFillInput},
 	"+range-sort": {"transform_range", rangeSortInput},
 
 	// ─── 工作簿 / 子表 (modify_workbook_structure, operation 区分) ──
 	"+sheet-create": {"modify_workbook_structure", func(fv flagView, token, _, _ string) (map[string]interface{}, error) {
-		return sheetCreateInput(fv, token), nil
+		return sheetCreateInput(fv, token)
 	}},
-	"+sheet-delete": {"modify_workbook_structure", noErrTranslate(sheetDeleteInput)},
-	"+sheet-rename": {"modify_workbook_structure", noErrTranslate(sheetRenameInput)},
+	"+sheet-delete": {"modify_workbook_structure", sheetDeleteInput},
+	"+sheet-rename": {"modify_workbook_structure", sheetRenameInput},
 	"+sheet-move":   {"modify_workbook_structure", sheetMoveBatchInput},
-	"+sheet-copy":   {"modify_workbook_structure", noErrTranslate(sheetCopyInput)},
-	"+sheet-hide": {"modify_workbook_structure", noErrTranslate(func(fv flagView, t, sid, sn string) map[string]interface{} {
+	"+sheet-copy":   {"modify_workbook_structure", sheetCopyInput},
+	"+sheet-hide": {"modify_workbook_structure", func(fv flagView, t, sid, sn string) (map[string]interface{}, error) {
 		return sheetVisibilityInput(fv, t, sid, sn, "hide")
-	})},
-	"+sheet-unhide": {"modify_workbook_structure", noErrTranslate(func(fv flagView, t, sid, sn string) map[string]interface{} {
+	}},
+	"+sheet-unhide": {"modify_workbook_structure", func(fv flagView, t, sid, sn string) (map[string]interface{}, error) {
 		return sheetVisibilityInput(fv, t, sid, sn, "unhide")
-	})},
-	"+sheet-set-tab-color": {"modify_workbook_structure", noErrTranslate(sheetSetTabColorInput)},
+	}},
+	"+sheet-set-tab-color": {"modify_workbook_structure", sheetSetTabColorInput},
 
 	// ─── 对象族 CRUD (manage_*_object, operation 区分) ─────────────
 	"+chart-create": {"manage_chart_object", objCreateTranslate(chartSpec)},
@@ -156,11 +153,7 @@ var batchOpDispatch = map[string]batchOpMapping{
 
 	"+filter-create": {"manage_filter_object", filterCreateInput},
 	"+filter-update": {"manage_filter_object", filterUpdateInput},
-	"+filter-delete": {"manage_filter_object", func(fv flagView, token, sid, sname string) (map[string]interface{}, error) {
-		input := map[string]interface{}{"excel_id": token, "operation": "delete"}
-		sheetSelectorForToolInput(input, sid, sname)
-		return input, nil
-	}},
+	"+filter-delete": {"manage_filter_object", filterDeleteInput},
 
 	"+filter-view-create": {"manage_filter_view_object", objCreateTranslate(filterViewSpec)},
 	"+filter-view-update": {"manage_filter_view_object", objUpdateTranslate(filterViewSpec)},

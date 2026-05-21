@@ -8,6 +8,7 @@
 package sheets
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
@@ -77,6 +78,59 @@ func resolveSheetSelector(runtime *common.RuntimeContext) (sheetID, sheetName st
 		return "", "", common.FlagErrorf("%v", err)
 	}
 	return "", name, nil
+}
+
+// validateViaInput shrinks a shortcut's Validate to the minimal
+// "token + ask the xxxInput builder if everything else is OK" pattern.
+// The builder owns the sheet selector and shortcut-specific checks
+// (--range required, --start >= 0, ...), so Validate no longer duplicates
+// them — the same error fires whether the shortcut runs standalone or as a
+// +batch-update sub-op. Use the inline form when the builder needs extra
+// arguments (operation enum, withMergeType bool, ...).
+func validateViaInput(
+	build func(fv flagView, token, sheetID, sheetName string) (map[string]interface{}, error),
+) func(ctx context.Context, runtime *common.RuntimeContext) error {
+	return func(ctx context.Context, runtime *common.RuntimeContext) error {
+		token, err := resolveSpreadsheetToken(runtime)
+		if err != nil {
+			return err
+		}
+		sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+		sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+		_, err = build(runtime, token, sheetID, sheetName)
+		return err
+	}
+}
+
+// requireSheetSelector is the flagView-agnostic counterpart of
+// resolveSheetSelector: given the already-extracted (sheetID, sheetName) pair,
+// it enforces the same XOR and control-char rules.
+//
+// Every batchable xxxInput builder calls this at the top so the same friendly
+// error fires whether the shortcut runs standalone (Validate sees the error
+// through the builder) or as a +batch-update sub-op (translator sees it
+// directly, prefixed by operations[i]). Without this, batch sub-ops
+// missing --sheet-id would slip through CLI validation and only fail on the
+// server with an opaque "sheet undefined not found".
+func requireSheetSelector(sheetID, sheetName string) error {
+	sheetID = strings.TrimSpace(sheetID)
+	sheetName = strings.TrimSpace(sheetName)
+	if sheetID == "" && sheetName == "" {
+		return common.FlagErrorf("specify at least one of --sheet-id or --sheet-name")
+	}
+	if sheetID != "" && sheetName != "" {
+		return common.FlagErrorf("--sheet-id and --sheet-name are mutually exclusive")
+	}
+	if sheetID != "" {
+		if err := validate.RejectControlChars(sheetID, "sheet-id"); err != nil {
+			return common.FlagErrorf("%v", err)
+		}
+	} else {
+		if err := validate.RejectControlChars(sheetName, "sheet-name"); err != nil {
+			return common.FlagErrorf("%v", err)
+		}
+	}
+	return nil
 }
 
 // sheetSelectorForToolInput packs --sheet-id / --sheet-name into the tool
@@ -206,7 +260,7 @@ func borderStylesFromFlag(runtime flagView) (map[string]interface{}, error) {
 
 // requireAnyStyleFlag ensures at least one style-defining flag (style or
 // border) is set — otherwise the request would do nothing.
-func requireAnyStyleFlag(runtime *common.RuntimeContext) error {
+func requireAnyStyleFlag(runtime flagView) error {
 	if len(buildCellStyleFromFlags(runtime)) > 0 {
 		return nil
 	}

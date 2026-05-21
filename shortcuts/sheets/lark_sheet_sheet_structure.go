@@ -124,11 +124,12 @@ var DimInsert = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+dim-insert"),
-	Validate:    validateDimRange,
+	Validate:    validateViaInput(dimInsertInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", dimInsertInput(runtime, token, sheetID, sheetName))
+		input, _ := dimInsertInput(runtime, token, sheetID, sheetName)
+		return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -139,7 +140,11 @@ var DimInsert = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", dimInsertInput(runtime, token, sheetID, sheetName))
+		input, err := dimInsertInput(runtime, token, sheetID, sheetName)
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", input)
 		if err != nil {
 			return err
 		}
@@ -148,7 +153,13 @@ var DimInsert = common.Shortcut{
 	},
 }
 
-func dimInsertInput(runtime flagView, token, sheetID, sheetName string) map[string]interface{} {
+func dimInsertInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if err := requireDimRange(runtime); err != nil {
+		return nil, err
+	}
 	dim := runtime.Str("dimension")
 	start := runtime.Int("start")
 	end := runtime.Int("end")
@@ -165,7 +176,7 @@ func dimInsertInput(runtime flagView, token, sheetID, sheetName string) map[stri
 	case "after":
 		input["side"] = "after"
 	}
-	return input
+	return input, nil
 }
 
 // DimDelete deletes rows / columns — irreversible, high-risk-write.
@@ -178,11 +189,12 @@ var DimDelete = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+dim-delete"),
-	Validate:    validateDimRange,
+	Validate:    validateDimRangeOp("delete"),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", dimRangeOpInput(runtime, token, sheetID, sheetName, "delete"))
+		input, _ := dimRangeOpInput(runtime, token, sheetID, sheetName, "delete")
+		return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -193,7 +205,11 @@ var DimDelete = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", dimRangeOpInput(runtime, token, sheetID, sheetName, "delete"))
+		input, err := dimRangeOpInput(runtime, token, sheetID, sheetName, "delete")
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", input)
 		if err != nil {
 			return err
 		}
@@ -203,6 +219,36 @@ var DimDelete = common.Shortcut{
 	Tips: []string{
 		"Row/column deletion is irreversible. Always preview with --dry-run first.",
 	},
+}
+
+// validateDimRangeOp returns a Validate closure that delegates to
+// dimRangeOpInput for shortcuts (delete/hide/unhide) whose builder takes an
+// extra `op` argument. Token check happens here; the rest is the builder.
+func validateDimRangeOp(op string) func(ctx context.Context, runtime *common.RuntimeContext) error {
+	return func(ctx context.Context, runtime *common.RuntimeContext) error {
+		token, err := resolveSpreadsheetToken(runtime)
+		if err != nil {
+			return err
+		}
+		sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+		sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+		_, err = dimRangeOpInput(runtime, token, sheetID, sheetName, op)
+		return err
+	}
+}
+
+// validateDimGroupOp is the group/ungroup counterpart of validateDimRangeOp.
+func validateDimGroupOp(op string) func(ctx context.Context, runtime *common.RuntimeContext) error {
+	return func(ctx context.Context, runtime *common.RuntimeContext) error {
+		token, err := resolveSpreadsheetToken(runtime)
+		if err != nil {
+			return err
+		}
+		sheetID := strings.TrimSpace(runtime.Str("sheet-id"))
+		sheetName := strings.TrimSpace(runtime.Str("sheet-name"))
+		_, err = dimGroupInput(runtime, token, sheetID, sheetName, op)
+		return err
+	}
 }
 
 // DimHide / DimUnhide toggle visibility on a row/column range.
@@ -232,28 +278,12 @@ var DimFreeze = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+dim-freeze"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if !runtime.Changed("dimension") {
-			return common.FlagErrorf("--dimension is required")
-		}
-		if !runtime.Changed("count") {
-			return common.FlagErrorf("--count is required (0 unfreezes)")
-		}
-		if runtime.Int("count") < 0 {
-			return common.FlagErrorf("--count must be >= 0")
-		}
-		return nil
-	},
+	Validate:    validateViaInput(dimFreezeInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", dimFreezeInput(runtime, token, sheetID, sheetName))
+		input, _ := dimFreezeInput(runtime, token, sheetID, sheetName)
+		return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -264,7 +294,11 @@ var DimFreeze = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", dimFreezeInput(runtime, token, sheetID, sheetName))
+		input, err := dimFreezeInput(runtime, token, sheetID, sheetName)
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", input)
 		if err != nil {
 			return err
 		}
@@ -273,7 +307,19 @@ var DimFreeze = common.Shortcut{
 	},
 }
 
-func dimFreezeInput(runtime flagView, token, sheetID, sheetName string) map[string]interface{} {
+func dimFreezeInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if !runtime.Changed("dimension") {
+		return nil, common.FlagErrorf("--dimension is required")
+	}
+	if !runtime.Changed("count") {
+		return nil, common.FlagErrorf("--count is required (0 unfreezes)")
+	}
+	if runtime.Int("count") < 0 {
+		return nil, common.FlagErrorf("--count must be >= 0")
+	}
 	dim := runtime.Str("dimension")
 	count := runtime.Int("count")
 	op := "freeze"
@@ -289,18 +335,13 @@ func dimFreezeInput(runtime flagView, token, sheetID, sheetName string) map[stri
 			input["freeze_columns"] = count
 		}
 	}
-	return input
+	return input, nil
 }
 
-// validateDimRange validates the public XOR pair and dimension/start/end
-// triple shared by insert/delete/hide/unhide/group/ungroup.
-func validateDimRange(ctx context.Context, runtime *common.RuntimeContext) error {
-	if _, err := resolveSpreadsheetToken(runtime); err != nil {
-		return err
-	}
-	if _, _, err := resolveSheetSelector(runtime); err != nil {
-		return err
-	}
+// requireDimRange validates the dimension/start/end triple shared by
+// insert/delete/hide/unhide/group/ungroup. Pure flag-level checks — the sheet
+// selector and token live in their own helpers.
+func requireDimRange(runtime flagView) error {
 	if !runtime.Changed("dimension") {
 		return common.FlagErrorf("--dimension is required")
 	}
@@ -320,14 +361,20 @@ func validateDimRange(ctx context.Context, runtime *common.RuntimeContext) error
 
 // dimRangeOpInput builds the tool input for delete/hide/unhide which all
 // take a `range` field. dimRange handles 0-based exclusive → 1-based inclusive.
-func dimRangeOpInput(runtime flagView, token, sheetID, sheetName, op string) map[string]interface{} {
+func dimRangeOpInput(runtime flagView, token, sheetID, sheetName, op string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if err := requireDimRange(runtime); err != nil {
+		return nil, err
+	}
 	input := map[string]interface{}{
 		"excel_id":  token,
 		"operation": op,
 		"range":     dimRange(runtime.Str("dimension"), runtime.Int("start"), runtime.Int("end")),
 	}
 	sheetSelectorForToolInput(input, sheetID, sheetName)
-	return input
+	return input, nil
 }
 
 // newDimRangeOpShortcut builds the shared shape for hide / unhide.
@@ -341,11 +388,12 @@ func newDimRangeOpShortcut(command, desc, op, risk string) common.Shortcut {
 		AuthTypes:   []string{"user", "bot"},
 		HasFormat:   true,
 		Flags:       flagsFor(command),
-		Validate:    validateDimRange,
+		Validate:    validateDimRangeOp(op),
 		DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 			token, _ := resolveSpreadsheetToken(runtime)
 			sheetID, sheetName, _ := resolveSheetSelector(runtime)
-			return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", dimRangeOpInput(runtime, token, sheetID, sheetName, op))
+			input, _ := dimRangeOpInput(runtime, token, sheetID, sheetName, op)
+			return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", input)
 		},
 		Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 			token, err := resolveSpreadsheetToken(runtime)
@@ -356,7 +404,11 @@ func newDimRangeOpShortcut(command, desc, op, risk string) common.Shortcut {
 			if err != nil {
 				return err
 			}
-			out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", dimRangeOpInput(runtime, token, sheetID, sheetName, op))
+			input, err := dimRangeOpInput(runtime, token, sheetID, sheetName, op)
+			if err != nil {
+				return err
+			}
+			out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", input)
 			if err != nil {
 				return err
 			}
@@ -380,11 +432,12 @@ func newDimGroupShortcut(command, desc, op string) common.Shortcut {
 		AuthTypes:   []string{"user", "bot"},
 		HasFormat:   true,
 		Flags:       flags,
-		Validate:    validateDimRange,
+		Validate:    validateDimGroupOp(op),
 		DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 			token, _ := resolveSpreadsheetToken(runtime)
 			sheetID, sheetName, _ := resolveSheetSelector(runtime)
-			return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", dimGroupInput(runtime, token, sheetID, sheetName, op))
+			input, _ := dimGroupInput(runtime, token, sheetID, sheetName, op)
+			return invokeToolDryRun(token, ToolKindWrite, "modify_sheet_structure", input)
 		},
 		Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 			token, err := resolveSpreadsheetToken(runtime)
@@ -395,7 +448,11 @@ func newDimGroupShortcut(command, desc, op string) common.Shortcut {
 			if err != nil {
 				return err
 			}
-			out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", dimGroupInput(runtime, token, sheetID, sheetName, op))
+			input, err := dimGroupInput(runtime, token, sheetID, sheetName, op)
+			if err != nil {
+				return err
+			}
+			out, err := callTool(ctx, runtime, token, ToolKindWrite, "modify_sheet_structure", input)
 			if err != nil {
 				return err
 			}
@@ -405,14 +462,17 @@ func newDimGroupShortcut(command, desc, op string) common.Shortcut {
 	}
 }
 
-func dimGroupInput(runtime flagView, token, sheetID, sheetName, op string) map[string]interface{} {
-	input := dimRangeOpInput(runtime, token, sheetID, sheetName, op)
+func dimGroupInput(runtime flagView, token, sheetID, sheetName, op string) (map[string]interface{}, error) {
+	input, err := dimRangeOpInput(runtime, token, sheetID, sheetName, op)
+	if err != nil {
+		return nil, err
+	}
 	if op == "group" {
 		if gs := runtime.Str("group-state"); gs != "" {
 			input["group_state"] = gs
 		}
 	}
-	return input
+	return input, nil
 }
 
 // ─── dimension formatting helpers ─────────────────────────────────────

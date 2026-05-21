@@ -114,25 +114,12 @@ var CellsReplace = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags:       flagsFor("+cells-replace"),
-	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
-		if _, err := resolveSpreadsheetToken(runtime); err != nil {
-			return err
-		}
-		if _, _, err := resolveSheetSelector(runtime); err != nil {
-			return err
-		}
-		if strings.TrimSpace(runtime.Str("find")) == "" {
-			return common.FlagErrorf("--find is required")
-		}
-		if !runtime.Changed("replacement") {
-			return common.FlagErrorf("--replacement is required (pass an empty string to delete matches)")
-		}
-		return nil
-	},
+	Validate:    validateViaInput(replaceInput),
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := resolveSpreadsheetToken(runtime)
 		sheetID, sheetName, _ := resolveSheetSelector(runtime)
-		return invokeToolDryRun(token, ToolKindWrite, "replace_data", replaceInput(runtime, token, sheetID, sheetName))
+		input, _ := replaceInput(runtime, token, sheetID, sheetName)
+		return invokeToolDryRun(token, ToolKindWrite, "replace_data", input)
 	},
 	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		token, err := resolveSpreadsheetToken(runtime)
@@ -143,7 +130,11 @@ var CellsReplace = common.Shortcut{
 		if err != nil {
 			return err
 		}
-		out, err := callTool(ctx, runtime, token, ToolKindWrite, "replace_data", replaceInput(runtime, token, sheetID, sheetName))
+		input, err := replaceInput(runtime, token, sheetID, sheetName)
+		if err != nil {
+			return err
+		}
+		out, err := callTool(ctx, runtime, token, ToolKindWrite, "replace_data", input)
 		if err != nil {
 			return err
 		}
@@ -155,7 +146,16 @@ var CellsReplace = common.Shortcut{
 	},
 }
 
-func replaceInput(runtime flagView, token, sheetID, sheetName string) map[string]interface{} {
+func replaceInput(runtime flagView, token, sheetID, sheetName string) (map[string]interface{}, error) {
+	if err := requireSheetSelector(sheetID, sheetName); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.Str("find")) == "" {
+		return nil, common.FlagErrorf("--find is required")
+	}
+	if !runtime.Changed("replacement") {
+		return nil, common.FlagErrorf("--replacement is required (pass an empty string to delete matches)")
+	}
 	input := map[string]interface{}{
 		"excel_id":     token,
 		"search_term":  runtime.Str("find"),
@@ -168,5 +168,5 @@ func replaceInput(runtime flagView, token, sheetID, sheetName string) map[string
 	if opts := searchReplaceOptions(runtime); len(opts) > 0 {
 		input["options"] = opts
 	}
-	return input
+	return input, nil
 }

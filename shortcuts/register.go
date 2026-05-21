@@ -29,6 +29,7 @@ import (
 	"github.com/larksuite/cli/shortcuts/markdown"
 	"github.com/larksuite/cli/shortcuts/minutes"
 	"github.com/larksuite/cli/shortcuts/sheets"
+	sheetsbackward "github.com/larksuite/cli/shortcuts/sheets/backward"
 	"github.com/larksuite/cli/shortcuts/slides"
 	"github.com/larksuite/cli/shortcuts/task"
 	"github.com/larksuite/cli/shortcuts/vc"
@@ -64,6 +65,11 @@ func init() {
 	allShortcuts = append(allShortcuts, im.Shortcuts()...)
 	allShortcuts = append(allShortcuts, contact_shortcuts.Shortcuts()...)
 	allShortcuts = append(allShortcuts, sheets.Shortcuts()...)
+	// Backward-compatible sheets shortcuts (pre-refactor command names),
+	// kept under shortcuts/sheets/backward so external callers relying on the
+	// old `+create`, `+read`, `+write`, ... commands keep working alongside the
+	// refactored ones. Command names are disjoint from sheets.Shortcuts().
+	allShortcuts = append(allShortcuts, sheetsbackward.Shortcuts()...)
 	allShortcuts = append(allShortcuts, base.Shortcuts()...)
 	allShortcuts = append(allShortcuts, event.Shortcuts()...)
 	allShortcuts = append(allShortcuts, mail.Shortcuts()...)

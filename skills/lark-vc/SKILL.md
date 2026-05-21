@@ -96,7 +96,8 @@ Meeting (视频会议)
     ├── Transcript (文字记录)
     ├── Summary (总结)
     ├── Todos (待办)
-    └── Chapters (章节)
+    ├── Chapters (章节)
+    └── Keywords (推荐关键词)
 ```
 
 > **注意**：`+search` 只能查询已结束的历史会议。查询未来的日程安排请使用 [lark-calendar](../lark-calendar/SKILL.md)。
@@ -158,7 +159,7 @@ lark-cli vc meeting get --params '{"meeting_id": "<meeting_id>", "with_participa
 | 方法 | 所需 scope |
 |------|-----------|
 | `+notes --meeting-ids` | `vc:meeting.meetingevent:read`、`vc:note:read` |
-| `+notes --minute-tokens` | `vc:note:read`、`minutes:minutes:readonly`、`minutes:minutes.artifacts:read`、`minutes:minutes.transcript:export` |
+| `+notes --minute-tokens` | `vc:note:read`、`minutes:minutes:readonly`、`minutes:minutes.artifacts:read` |
 | `+notes --calendar-event-ids` | `calendar:calendar:read`、`calendar:calendar.event:read`、`vc:meeting.meetingevent:read`、`vc:note:read` |
 | `+recording --meeting-ids` | `vc:record:readonly` |
 | `+recording --calendar-event-ids` | `vc:record:readonly`、`calendar:calendar:read`、`calendar:calendar.event:read` |

@@ -64,7 +64,7 @@ lark-cli vc +notes --meeting-ids 69xxxxxxxxxxxxx28 --dry-run
 | 输入 | 所需权限 |
 |------|---------|
 | `--meeting-ids` | `vc:meeting.meetingevent:read`、`vc:note:read` |
-| `--minute-tokens` | `vc:note:read`、`minutes:minutes:readonly`、`minutes:minutes.artifacts:read`、`minutes:minutes.transcript:export` |
+| `--minute-tokens` | `vc:note:read`、`minutes:minutes:readonly`、`minutes:minutes.artifacts:read` |
 | `--calendar-event-ids` | `calendar:calendar:read`、`calendar:calendar.event:read`、`vc:meeting.meetingevent:read`、`vc:note:read` |
 
 ## 输出结果
@@ -93,6 +93,7 @@ lark-cli vc +notes --meeting-ids 69xxxxxxxxxxxxx28 --dry-run
 | `artifacts.summary` | AI 总结（JSON 内联） |
 | `artifacts.todos` | 待办事项（JSON 内联） |
 | `artifacts.chapters` | 章节纪要（JSON 内联） |
+| `artifacts.keywords` | 妙记推荐关键词（JSON 内联） |
 | `artifacts.transcript_file` | 逐字稿本地文件路径。默认落到 `./minutes/{minute_token}/transcript.txt`（与 `minutes +download` 聚合）；显式 `--output-dir` 时走旧布局 `./{output-dir}/artifact-{title}-{token}/transcript.txt` |
 
 ## 如何获取输入参数

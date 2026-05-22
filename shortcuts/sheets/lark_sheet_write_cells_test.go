@@ -118,11 +118,15 @@ func TestWriteCellsShortcuts_DryRun(t *testing.T) {
 
 // TestDropdownSet_CellsShape inspects the 3×1 matrix produced from
 // --range A2:A4 to confirm the data_validation prototype is replicated.
+// Also covers --colors / --highlight emitting the canonical
+// `highlight_colors` / `enable_highlight` field names (not the legacy
+// `colors` / `highlight_options`).
 func TestDropdownSet_CellsShape(t *testing.T) {
 	t.Parallel()
 	body := parseDryRunBody(t, DropdownSet, []string{
 		"--url", testURL, "--sheet-id", testSheetID,
 		"--range", "A2:A4", "--options", `["a","b"]`, "--multiple",
+		"--colors", `["#FFE699","#bff7d9"]`, "--highlight",
 	})
 	input := decodeToolInput(t, body, "set_cell_range")
 	cells, _ := input["cells"].([]interface{})
@@ -153,6 +157,38 @@ func TestDropdownSet_CellsShape(t *testing.T) {
 		if _, hasLegacy := dv["multiple_values"]; hasLegacy {
 			t.Errorf("row %d data_validation should not emit legacy `multiple_values`", i)
 		}
+		colors, _ := dv["highlight_colors"].([]interface{})
+		if len(colors) != 2 || colors[0] != "#FFE699" || colors[1] != "#bff7d9" {
+			t.Errorf("row %d data_validation.highlight_colors = %#v, want [\"#FFE699\",\"#bff7d9\"]", i, dv["highlight_colors"])
+		}
+		if dv["enable_highlight"] != true {
+			t.Errorf("row %d data_validation.enable_highlight = %v, want true", i, dv["enable_highlight"])
+		}
+		if _, hasLegacy := dv["colors"]; hasLegacy {
+			t.Errorf("row %d data_validation should not emit legacy `colors`", i)
+		}
+		if _, hasLegacy := dv["highlight_options"]; hasLegacy {
+			t.Errorf("row %d data_validation should not emit legacy `highlight_options`", i)
+		}
+	}
+}
+
+// TestDropdownSet_ColorsLengthMismatch checks the early Validate-time
+// error when --colors length doesn't match --options.
+func TestDropdownSet_ColorsLengthMismatch(t *testing.T) {
+	t.Parallel()
+	_, stderr, err := runShortcutCapturingErr(t, DropdownSet, []string{
+		"--url", testURL, "--sheet-id", testSheetID,
+		"--range", "A2:A4",
+		"--options", `["a","b","c"]`,
+		"--colors", `["#FFE699","#bff7d9"]`,
+		"--dry-run",
+	})
+	if err == nil {
+		t.Fatal("expected --colors length mismatch error, got nil")
+	}
+	if !strings.Contains(stderr, "must equal --options length") && !strings.Contains(err.Error(), "must equal --options length") {
+		t.Errorf("error message missing length-mismatch hint:\nerr=%v\nstderr=%s", err, stderr)
 	}
 }
 

@@ -331,14 +331,16 @@ func dropdownSetInput(runtime flagView, token, sheetID, sheetName string) (map[s
 
 // ─── shared dropdown helpers ──────────────────────────────────────────
 
-// buildDropdownValidation packs --options / --multiple into the
-// data_validation block expected by set_cell_range. Field names match
-// the canonical schema: items (not values) for the option list, and
-// support_multiple_values (not multiple_values) for multi-select.
-// Earlier CLI builds also emitted `colors` and `highlight_options`,
-// neither of which exists in the server schema for set_cell_range; both
-// were rejected as "unexpected property". The --colors / --highlight
-// flags have been removed; only --options + --multiple remain.
+// buildDropdownValidation packs --options / --colors / --multiple / --highlight
+// into the data_validation block expected by set_cell_range. Field names
+// follow the canonical set_cell_range.data_validation schema:
+//
+//	--options   -> items                    (string array)
+//	--multiple  -> support_multiple_values  (bool)
+//	--colors    -> highlight_colors         (string array, hex)
+//	--highlight -> enable_highlight         (bool)
+//
+// --colors length must equal --options length when both are set.
 func buildDropdownValidation(runtime flagView) (map[string]interface{}, error) {
 	options, err := requireJSONArray(runtime, "options")
 	if err != nil {
@@ -348,18 +350,41 @@ func buildDropdownValidation(runtime flagView) (map[string]interface{}, error) {
 		"type":  "list",
 		"items": options,
 	}
+	if runtime.Str("colors") != "" {
+		colors, err := requireJSONArray(runtime, "colors")
+		if err != nil {
+			return nil, err
+		}
+		if len(colors) != len(options) {
+			return nil, common.FlagErrorf("--colors length (%d) must equal --options length (%d)", len(colors), len(options))
+		}
+		dv["highlight_colors"] = colors
+	}
 	if runtime.Bool("multiple") {
 		dv["support_multiple_values"] = true
+	}
+	if runtime.Bool("highlight") {
+		dv["enable_highlight"] = true
 	}
 	return dv, nil
 }
 
-// validateDropdownOptions checks that --options parses as a JSON array
-// and returns its length so callers can size their cells matrix.
-func validateDropdownOptions(runtime flagView) (int, error) {
+// validateDropdownOptionsColors validates --options is a JSON array and that
+// --colors (when set) has matching length. Returns the options length so
+// callers can size their cells matrix at Validate time without re-parsing.
+func validateDropdownOptionsColors(runtime flagView) (int, error) {
 	options, err := requireJSONArray(runtime, "options")
 	if err != nil {
 		return 0, err
+	}
+	if runtime.Str("colors") != "" {
+		colors, err := requireJSONArray(runtime, "colors")
+		if err != nil {
+			return 0, err
+		}
+		if len(colors) != len(options) {
+			return 0, common.FlagErrorf("--colors length (%d) must equal --options length (%d)", len(colors), len(options))
+		}
 	}
 	return len(options), nil
 }

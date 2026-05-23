@@ -1759,6 +1759,10 @@
             }
           }
         },
+        "required": [
+          "position",
+          "size"
+        ],
         "additionalProperties": {}
       }
     },
@@ -2785,6 +2789,10 @@
             }
           }
         },
+        "required": [
+          "position",
+          "size"
+        ],
         "additionalProperties": {}
       }
     },

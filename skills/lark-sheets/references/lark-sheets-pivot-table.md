@@ -121,14 +121,26 @@ lark-cli sheets +pivot-list --url "..." --sheet-id "$SID"
 
 > 数据源 `--source` 必须从表头行开始；空行 / 汇总行会被当作数据参与聚合，需提前用 `+csv-get` 确认起止边界。`--source` 和 `--range` 是独立 flag（不要再放 `--properties`）；`rows` / `columns` / `values` 等数组字段走 `--properties`。
 >
-> **落点 flag 三选一的决策（避免冲突）**：
-> - **默认（推荐）**：`--target-sheet-id` / `--target-position` / `--range` 都不传 → 自动新建子表存放透视表产物。
-> - **放进指定的已有子表**：传 `--target-sheet-id <落点子表 id>` + 可选 `--target-position <子表内起点 cell，默认 A1>`。
-> - **`--range`** 只在不指定落点子表、想精确指定左上角 cell（映射到 `properties.range`）时用；与 `--target-position` 表达同一意图但落不同 wire 字段，**两者不要同时给**。一般用前两种即可，无需 `--range`。
+> **先理清 `+pivot-create` 上 5 个位置类入参（语义不同，别混）**：
+> - 公共 `--sheet-id` / `--sheet-name`（**必填**，公共四件套）：定位**操作所在工作表**（数据源 sheet 的上下文）。
+> - `--source`（**必填**）：**源数据**区域，须自带 `Sheet!` 前缀（如 `Sheet1!A1:D100`）。
+> - `--target-sheet-id` / `--target-position` / `--range`：**产物落点**，按下面 3 种策略二选其一。
+>
+> **落点 3 种策略（互斥，选其一）**：
+> 1. **默认（强烈推荐）**：`--target-sheet-id` / `--target-position` / `--range` **都不传** → 服务端**自动新建子表**存放产物，绝不碰源数据。
+> 2. **放进指定的已有子表**：`--target-sheet-id <落点子表 id>`，可选 `--target-position <子表内起点 cell，默认 A1>`（这两个是**配套**使用，不是互斥）。
+> 3. **`--range`**：仅在不指定落点子表、想精确指定左上角 cell（映射到 `properties.range`）时用。⚠️ **`--range` 把产物落在公共 `--sheet-id` 指向的那张 sheet 上**——若 `--sheet-id` 就是源数据 sheet，产物会盖在源数据旁/上、**可能覆盖数据**。它与 `--target-position` 表达同一意图但落不同 wire 字段，**两者不要同时给**。
+>
+> 一般用策略 1（默认新建子表）即可，无需 `--range`／`--target-*`。
 
 ```bash
-lark-cli sheets +pivot-create --url "..." --sheet-id "$SRC_SID" \
-  --source "Sheet1!A1:D100" --range "F1" --properties @pivot.json
+# 策略 1（推荐）：只给必填的公共 sheet 定位 + 源数据，不给落点 flag → 自动新建子表，零覆盖风险
+lark-cli sheets +pivot-create --url "..." --sheet-id "$SID" \
+  --source "Sheet1!A1:D100" --properties @pivot.json
+
+# 策略 2：落进指定的已有目标子表（不会碰源数据）
+lark-cli sheets +pivot-create --url "..." --sheet-id "$SID" \
+  --source "Sheet1!A1:D100" --target-sheet-id "$DEST_SID" --target-position "A1" --properties @pivot.json
 ```
 
 ### `+pivot-update`
@@ -138,7 +150,7 @@ lark-cli sheets +pivot-create --url "..." --sheet-id "$SRC_SID" \
 ### `+pivot-delete`
 
 ```bash
-lark-cli sheets +pivot-delete --url "..." --pivot-table-id "$PID" --yes
+lark-cli sheets +pivot-delete --url "..." --sheet-id "$SID" --pivot-table-id "$PID" --yes
 ```
 
 ### Validate / DryRun / Execute 约束

@@ -495,7 +495,7 @@
         "kind": "own",
         "type": "string",
         "required": "optional",
-        "desc": "Required only in csv mode: the sheet reference_id to export"
+        "desc": "Required only in csv mode: which sheet to export as CSV. This is a `+workbook-export`-specific flag, unrelated to the common four-tuple sheet locator (this shortcut does not accept the common sheet locator)"
       },
       {
         "name": "output-path",
@@ -3745,7 +3745,7 @@
         "kind": "own",
         "type": "string",
         "required": "optional",
-        "desc": "Filter rule JSON: `rules` (required, per-column rule array), `filtered_columns?` (active column index hint). `range` is a separate flag (do not duplicate inside this JSON)",
+        "desc": "Filter rule JSON: `rules` (per-column rule array), `filtered_columns?` (active column index hint). The flag is optional overall — if provided, `rules` must be non-empty; if omitted, an empty filter is created on `--range` (no column conditions). `range` is a separate flag (do not duplicate inside this JSON)",
         "input": [
           "file",
           "stdin"
@@ -4410,7 +4410,7 @@
         "kind": "own",
         "type": "string",
         "required": "xor",
-        "desc": "Image reference_id (XOR with `--image-token`); a prefixed string like `<|image|>:abcdef`"
+        "desc": "Image reference_id (XOR with `--image-token`); the reference_id returned by the image upload flow"
       },
       {
         "name": "position-row",
@@ -4527,7 +4527,7 @@
         "kind": "own",
         "type": "string",
         "required": "xor",
-        "desc": "Image reference_id (XOR with `--image-token`); a prefixed string like `<|image|>:abcdef`"
+        "desc": "Image reference_id (XOR with `--image-token`); the reference_id returned by the image upload flow"
       },
       {
         "name": "position-row",

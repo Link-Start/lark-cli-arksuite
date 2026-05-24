@@ -127,15 +127,14 @@
 
 #### 2A. 继续补充行/列（数据性质与已有内容一致）
 
-**核心规则**：采样紧邻 2 行样式 → 延续 Zebra Stripes 奇偶性 → 写入时原样应用 `cell_styles` + `border_styles`。
+**核心规则**：采样紧邻 2 行 → 判断并延续 Zebra Stripes 奇偶性 → 按 write-cells 的继承清单带齐样式写入。
 
-**关键样式要点**：
+**斑马纹延续要点**（本节只管"奇偶判断"这一标准，"带哪些样式字段写入"的机制见下方指针）：
 
 - 至少读 2 行（末行 + 倒数第二行）才能判断是否有斑马纹交替色
 - 若倒数两行背景色不同（如 #FFFFFF 与 #F3F4F6），新行按奇偶延续，不要固定一个色
-- `border_styles` 最易遗漏（四边都要复制），否则新行会缺框线
 
-> 具体采样调用（用 `+cells-get` 读源行 `cell_styles` + `border_styles`、`+sheet-info` 读行高合并）见 `lark-sheets-write-cells` 的「新增列 / 新增行的样式继承」章节。
+> 具体继承哪些字段、怎么采样与写入（`+cells-get` 读源行 `cell_styles` + `border_styles`、`+sheet-info --include row_heights,merges` 读行高合并、带齐 6 类样式写入）见 `lark-sheets-write-cells` 的「新增列 / 新增行的样式继承」章节——`border_styles` 四边最易遗漏，以那里为准。
 
 #### 2B. 基于模板区域的修改（copy 保留所有格式）
 

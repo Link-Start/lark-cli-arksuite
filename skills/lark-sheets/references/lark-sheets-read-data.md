@@ -124,8 +124,8 @@ _公共四件套 · 系统：`--dry-run`_
 示例：
 
 ```bash
-# 简单读
-lark-cli sheets +csv-get --url "https://example.feishu.cn/sheets/shtXXX" --range "Sheet1!A1:F30"
+# 简单读（sheet 定位必填：--sheet-name 或 --sheet-id 必给一个；range 的 Sheet1! 前缀不能替代它）
+lark-cli sheets +csv-get --url "https://example.feishu.cn/sheets/shtXXX" --sheet-name "Sheet1" --range "A1:F30"
 
 # 用 sheet-name 模糊定位（运行时框架会先解析到 sheet-id）
 lark-cli sheets +csv-get --spreadsheet-token shtXXX --sheet-name "销售明细" --range "A1:F30"
@@ -143,9 +143,9 @@ lark-cli sheets +csv-get --spreadsheet-token shtXXX --sheet-name "销售明细" 
 示例：
 
 ```bash
-# 读 A1:F10 的公式 + 样式
-lark-cli sheets +cells-get --url "https://example.feishu.cn/sheets/shtXXX" \
-  --range "Sheet1!A1:F10" --include formula,style
+# 读 A1:F10 的公式 + 样式（sheet 定位必填）
+lark-cli sheets +cells-get --url "https://example.feishu.cn/sheets/shtXXX" --sheet-name "Sheet1" \
+  --range "A1:F10" --include formula,style
 ```
 
 > ⚠️ 调用方在 `cells[i][j]` 中**不能**用下标推真实行列：必须读 `ranges[n].row_indices[i]` / `ranges[n].col_indices[j]`。

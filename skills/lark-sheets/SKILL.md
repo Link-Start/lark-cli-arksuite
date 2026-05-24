@@ -13,6 +13,16 @@ metadata:
 
 **CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理。**
 
+## 术语约定
+
+下列词在本 skill 各文档中可能交替出现，但**指同一对象**；解析用户口语时按此映射，不要当成不同概念：
+
+| 标准用语 | 同义 / 口语（均指同一对象） | 说明 |
+| --- | --- | --- |
+| 工作表（sheet） | 子表、tab、标签页 | spreadsheet 内的单张表；`sheet_id` 是其稳定标识 |
+| 电子表格（spreadsheet） | 工作簿、表格 | 顶层容器；由 `--url` 或 `--spreadsheet-token` 定位 |
+| reference_id | id | 各 `*-id` flag（`--sheet-id` / `--chart-id` / `--pivot-table-id` / `--group-id` / `--view-id` 等）接受的对象标识符，统称 reference_id |
+
 ## References
 
 本 skill 按能力子域组织，每个子域有独立 reference。先按下表索引定位到目标子域，再进入对应 reference 查 shortcut / 调用细节。
@@ -41,21 +51,35 @@ metadata:
 
 各 reference 的每个 shortcut 标题下用一行徽章标注该 shortcut 支持的公共 / 系统 flag，例如：
 
-- `_公共四件套 · 系统：--dry-run_` — URL/token + sheet 定位全 4 个公共 flag，加 `--dry-run`
+- `_公共四件套 · 系统：--dry-run_` — URL/token + sheet 定位（两组各**必给一个**，详见下方「公共 flag」），加 `--dry-run`
 - `_公共：URL/token（无 sheet 定位） · 系统：--yes、--dry-run_` — 只接 URL/token，常见于 `+batch-update` 等不强制 sheet 定位的 shortcut
 
 徽章里只列名字。type / 必填 / 描述都在本段统一声明：
 
 ### 公共 flag（定位资源）
 
-**公共四件套** = `--url` / `--spreadsheet-token` / `--sheet-id` / `--sheet-name`。前两者 XOR 互斥（spreadsheet 定位），后两者 XOR 互斥（sheet 定位）。
+**公共四件套** = `--url` / `--spreadsheet-token` / `--sheet-id` / `--sheet-name`，分成两组 XOR，**每组都必须给且只能给一个**（XOR = 二选一必填，不是"可选"）：
+
+1. **spreadsheet 定位（必填）**：`--url` 与 `--spreadsheet-token` 二选一，**必须给其中之一**。两个都不给 → 校验报错 `specify at least one of --url or --spreadsheet-token`；两个都给 → 互斥冲突。
+2. **sheet 定位（公共四件套 shortcut 必填）**：`--sheet-id` 与 `--sheet-name` 二选一，**必须给其中之一**。两个都不给 → 校验报错 `specify at least one of --sheet-id or --sheet-name`。
+   - ⚠️ **`--range` 里的 `Sheet1!` 前缀不能替代 sheet 定位**：即使写了 `--range "Sheet1!A1:B2"`，仍**必须**额外传 `--sheet-id` 或 `--sheet-name`，否则照样报上面的错。
+   - **例外**：徽章标为 `_公共：URL/token（无 sheet 定位）…_` 的 shortcut（如 `+workbook-info` / `+workbook-export` / `+batch-update` / `+dropdown-get|update|delete` / `+cells-batch-set-style` / `+cells-batch-clear` / `+sheet-create`）**不接受也不需要** sheet 定位，只给一组 spreadsheet 定位即可。
 
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `--url` | string | XOR | spreadsheet URL；与 `--spreadsheet-token` 二选一 |
-| `--spreadsheet-token` | string | XOR | spreadsheet token；与 `--url` 二选一 |
-| `--sheet-id` | string | XOR | 工作表 reference_id；与 `--sheet-name` 二选一 |
-| `--sheet-name` | string | XOR | 工作表名称；与 `--sheet-id` 二选一 |
+| `--url` | string | 二选一必填（与 `--spreadsheet-token`） | spreadsheet URL |
+| `--spreadsheet-token` | string | 二选一必填（与 `--url`） | spreadsheet token |
+| `--sheet-id` | string | 二选一必填（与 `--sheet-name`；仅公共四件套 shortcut） | 工作表 reference_id |
+| `--sheet-name` | string | 二选一必填（与 `--sheet-id`；仅公共四件套 shortcut） | 工作表名称 |
+
+**统一调用范式**（公共四件套 shortcut 的所有示例都遵循此形状，两组定位缺一不可）：
+
+```bash
+lark-cli sheets <shortcut> <workbook 定位> <sheet 定位> <其它 flag>
+#   workbook 定位：--url "..."        或 --spreadsheet-token "..."   （二选一，必给）
+#   sheet 定位：    --sheet-id "$SID"  或 --sheet-name "Sheet1"        （二选一，必给）
+# 例：lark-cli sheets +csv-get --url "https://.../sheets/shtXXX" --sheet-name "Sheet1" --range "A1:F30"
+```
 
 ### 系统 flag
 
@@ -66,7 +90,7 @@ metadata:
 | `--print-schema` | bool | 否 | 本地打印复合 JSON flag 的 JSON Schema 并退出，不发起任何调用、不需要其它 required flag。与 `--flag-name <name>` 搭配指定要查哪个 flag；省略 `--flag-name` 时列出该 shortcut 所有可查询的 flag。**仅在 shortcut 含复合 JSON flag 时有效**——判断方法：该 shortcut 的 Flags 表里出现类型标注为「复合 JSON」的 flag（如 `--cells` / `--properties` / `--operations` / `--border-styles` / `--sort-keys` / `--options`）即支持；纯标量 flag 的 shortcut 不支持。 |
 | `--flag-name` | string | 否 | 配合 `--print-schema` 使用，指定要打印 JSON Schema 的 flag 名（不带 `--` 前缀，如 `cells` / `properties` / `operations`）。 |
 
-**Agent 使用提示**：写复合 JSON flag（`--cells` / `--properties` / `--operations` / `--border-styles` / `--sort-keys` 等）时，如果对结构不确定，先跑 `lark-cli sheets <shortcut> --print-schema --flag-name <name>` 把完整 JSON Schema 读出来再构造 payload，比靠 reference 的速查表更精确，也避免因为字段拼写或缺失被服务端拒绝。reference 的 `## Schemas` 段只给一层结构，深层只能靠 `--print-schema` 或 `## Examples` 的真实示例。
+**Agent 使用提示**：写复合 JSON flag（`--cells` / `--properties` / `--operations` / `--border-styles` / `--sort-keys` / `--options` 等）时，如果对结构不确定，先跑 `lark-cli sheets <shortcut> --print-schema --flag-name <name>` 把完整 JSON Schema 读出来再构造 payload，比靠 reference 的速查表更精确，也避免因为字段拼写或缺失被服务端拒绝。reference 的 `## Schemas` 段只给一层结构，深层只能靠 `--print-schema` 或 `## Examples` 的真实示例。
 
 ## 复合 JSON / 大入参：优先 stdin
 
@@ -75,7 +99,7 @@ flag 帮助里标注支持 **Stdin** 的入参，当 payload 较大、含换行 
 推荐写法：payload 写到 cwd 之外的临时文件（如 `/tmp/cells.json`，不污染用户项目目录），再用 stdin 喂进去：
 
 ```bash
-lark-cli sheets +cells-set --url "..." --range "A1:B2" --cells - < /tmp/cells.json
+lark-cli sheets +cells-set --url "..." --sheet-name "Sheet1" --range "A1:B2" --cells - < /tmp/cells.json
 ```
 
 **`@file` 接绝对路径会被拒，且被拒后不要照报错提示做。** `@file` 出于安全只接受 cwd 下的相对路径，传 `@/tmp/cells.json` 这类绝对路径或 cwd 之外的路径会被拒。此时报错会建议"先 cd 到目标目录，或改用相对路径"——**两条都不要照做**：cd 过去、或把临时文件写进用户项目目录，都会污染工作目录。正解是改用 stdin（`--<flag> - < 文件`）。

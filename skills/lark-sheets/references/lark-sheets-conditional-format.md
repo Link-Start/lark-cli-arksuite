@@ -14,7 +14,7 @@
 
 **判断标准**：交付后 `+cond-format-list` 必须能返回该规则；否则视为违规。
 
-**大数据量加分项**：当数据量 > 1000 行时，条件格式是首选——它由飞书自身渲染，不会触发 本地脚本 50 秒超时（同 R8）。
+**大数据量首选**：当数据量 > 1000 行时，条件格式是首选——它由飞书自身渲染，比"本地脚本逐行计算 + `+cells-set` 写静态背景色"更高效、更稳（颜色还能随源数据自动联动）。
 
 ## 使用场景
 
@@ -61,7 +61,7 @@ Step 2: 基于辅助列值做条件格式（用 cellIs 或引用辅助列的 exp
 `+cond-format-{create|update|delete}` create
   rule_type: "expression"
   ranges: ["2:145"]
-  attrs: [{formula: ["=$O2>$H2"]}]   ← 虽然逻辑等价，但产物里缺辅助列 → 扣配置需求分
+  attrs: [{formula: ["=$O2>$H2"]}]   ← 虽然逻辑等价，但产物里缺辅助列 → 不满足用户明确要求的"辅助列"诉求
 ```
 
 为什么禁止一步走：用户明确要求辅助列是有**业务意图**的——让人肉眼能在表里看到"是/否"列；条件格式只是视觉辅助。一步 expression 虽然效果对了，但用户打开表格看不到辅助列，被视为"操作不完整/未采用公式"。
@@ -167,7 +167,7 @@ lark-cli sheets +cond-format-create --url "..." --sheet-id "$SID" \
 ### `+cond-format-delete`
 
 ```bash
-lark-cli sheets +cond-format-delete --url "..." --rule-id "$RULE_ID" --yes
+lark-cli sheets +cond-format-delete --url "..." --sheet-id "$SID" --rule-id "$RULE_ID" --yes
 ```
 
 ### Validate / DryRun / Execute 约束

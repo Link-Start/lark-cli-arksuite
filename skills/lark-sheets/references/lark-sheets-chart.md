@@ -2,7 +2,7 @@
 
 ## 真对象硬约束
 
-当用户要求"画个图 / 数据可视化 / 趋势图 / 对比图 / 占比图"时，**必须**通过 `+chart-{create|update|delete}` 创建真实的图表对象。**禁止**用 本地脚本 调 matplotlib / seaborn 生成图片再插入到表格代替——静态图片无法随源数据更新，且失去交互能力。判断标准：交付后 `+chart-list` 必须能返回该对象。
+当用户要求"画个图 / 数据可视化 / 趋势图 / 对比图 / 占比图"时，**必须**通过 `+chart-{create|update|delete}` 创建真实的图表对象。**禁止**用本地脚本调 matplotlib / seaborn 生成图片再插入到表格代替——静态图片无法随源数据更新，且失去交互能力。判断标准：交付后 `+chart-list` 必须能返回该对象。
 
 ## 使用场景
 
@@ -80,9 +80,9 @@
 
 ## 图表位置选择（创建前必做）
 
-凭感觉挑列号/行号会被 API 拒（`position is out of sheet range`），浪费一轮调用。按以下四步走：
+凭感觉挑列号/行号会被 API 拒（`position is out of sheet range`）。按以下四步走：
 
-1. **查尺寸**：`+sheet-info` 拿 `rowCount` / `columnCount`。
+1. **查尺寸**：`+workbook-info` 拿该 sheet 的 `row_count` / `column_count`（下文记为 rowCount / columnCount；`+sheet-info` 只返回布局，不含行列总数）。
 2. **估跨度**：默认单元格 **105 px 宽 × 27 px 高**，`needCols = ceil(width/105)`，`needRows = ceil(height/27)`。
 3. **校验**：`position.row + needRows ≤ rowCount` 且 `col_idx + needCols ≤ columnCount`（col 按 A=0、B=1、…、Z=25、AA=26… 换算）。
 4. **不够就先扩表**，二选一，禁止硬塞越界位置：
@@ -165,9 +165,10 @@ _创建/更新的图表属性_
 示例：
 
 ```bash
-# 内联 JSON
+# 内联 JSON —— 最小列图骨架（inline 模式：refs 含表头行，首列/首行即类别/系列名）
+# 完整字段（堆叠/数据标签/detached/坐标轴等）跑 --print-schema --flag-name properties
 lark-cli sheets +chart-create --url "https://example.feishu.cn/sheets/shtXXX" \
-  --sheet-name "Sheet1" --properties '{"position":{"row":42,"col":"A"},"size":{"width":600,"height":400},"snapshot":{...}}'
+  --sheet-name "Sheet1" --properties '{"position":{"row":42,"col":"A"},"size":{"width":600,"height":400},"snapshot":{"data":{"refs":[{"value":"Sheet1!A1:B10"}]},"plotArea":{"plot":{"type":"column"}}}}'
 
 # 走文件（推荐配置较多时）
 lark-cli sheets +chart-create --url "https://example.feishu.cn/sheets/shtXXX" \
@@ -188,12 +189,12 @@ lark-cli sheets +chart-create --url "https://example.feishu.cn/sheets/shtXXX" \
 示例：
 
 ```bash
-# dry-run 先看会删什么
-lark-cli sheets +chart-delete --url "https://example.feishu.cn/sheets/shtXXX" \
+# dry-run 先看会删什么（sheet 定位必填）
+lark-cli sheets +chart-delete --url "https://example.feishu.cn/sheets/shtXXX" --sheet-id "$SID" \
   --chart-id "chrXXX" --dry-run
 
 # 真正执行
-lark-cli sheets +chart-delete --url "https://example.feishu.cn/sheets/shtXXX" \
+lark-cli sheets +chart-delete --url "https://example.feishu.cn/sheets/shtXXX" --sheet-id "$SID" \
   --chart-id "chrXXX" --yes
 ```
 

@@ -117,7 +117,7 @@ lark-cli sheets +filter-view-create --url "..." --sheet-id "$SID" \
 
 ### `+filter-view-delete`
 
-> ⚠️ 视图删除不可逆；视图不存在按幂等成功处理。先 `--dry-run` 看 view_id 确认。
+> ⚠️ 删除**已存在**的视图不可逆；目标 view_id **不存在**时按幂等成功返回（不报错）。先 `--dry-run` 看 view_id 确认。
 
 ### Validate / DryRun / Execute 约束
 

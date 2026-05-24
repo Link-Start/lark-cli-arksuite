@@ -3,7 +3,7 @@
 ## 真对象硬约束 + 数量校验
 
 1. **真对象**：当用户要求"筛选 / 只看 / 仅保留 X"时，**必须**通过 `+filter-{create|update|delete}` 创建真实的筛选器对象。**禁止**用"删除不符合条件的行" / "新建子表只放符合条件的行" / 用 `+cells-set` 覆盖原表来代替——这些做法会让原数据丢失或不可恢复。
-2. **筛选数量必校**：执行筛选后**必须**回读，断言 `len(visible_rows) == expected_count`。`expected_count` 来自先用 本地脚本 在源数据上独立复现该筛选条件得到的结果数。两者不一致时禁止交付，需排查筛选条件 / 数据列类型问题。
+2. **筛选数量必校**：执行筛选后**必须**回读，断言 `len(visible_rows) == expected_count`。`expected_count` 来自先用本地脚本在源数据上独立复现该筛选条件得到的结果数。两者不一致时禁止交付，需排查筛选条件 / 数据列类型问题。
 3. **混合文本列禁止字面比较**：筛选 key 是公式文本（如 `1000+200=1200`）或带单位的混合文本时，先在辅助列里抽出纯数值再筛选；不能直接用文本比较。
 
 ## 使用场景
@@ -51,7 +51,7 @@ _公共四件套 · 系统：`--dry-run`_
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `--range` | string | required | 筛选范围（A1 表示法，含表头行，如 `A1:F1000`）；不要重复写入 `--properties` 中的 range 字段 |
-| `--properties` | string + File + Stdin（复合 JSON） | optional | 筛选规则 JSON，含 `rules`（列级筛选规则数组，必填）和 `filtered_columns?`（激活列索引提示）。`range` 是独立 flag（不要再放此 JSON 里） |
+| `--properties` | string + File + Stdin（复合 JSON） | optional | 筛选规则 JSON：`rules`（列级筛选规则数组）+ `filtered_columns?`（激活列索引提示）。`--properties` 整体可选——传它时 `rules` 不可为空；不传则只在 `--range` 上建立空筛选器（无列条件）。`range` 是独立 flag（不要再放此 JSON 里） |
 
 ### `+filter-update`
 

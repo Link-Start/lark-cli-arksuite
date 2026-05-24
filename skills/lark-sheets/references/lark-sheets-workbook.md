@@ -133,7 +133,7 @@ _公共：URL/token（无 sheet 定位） · 系统：`--dry-run`_
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `--file-extension` | string | optional | 导出文件格式；`csv` 模式必须配 `--sheet-id`（可选值：`xlsx` / `csv`）（默认 `xlsx`） |
-| `--sheet-id` | string | optional | 仅 csv 模式必填：指定要导出的 sheet reference_id |
+| `--sheet-id` | string | optional | 仅 csv 模式必填：指定要导出哪张 sheet 为 CSV。这是 `+workbook-export` 专有 flag，与公共四件套的 sheet 定位无关（本 shortcut 不接受公共 sheet 定位） |
 | `--output-path` | string | optional | 本地保存路径；省略时只触发导出不下载 |
 
 ## Examples

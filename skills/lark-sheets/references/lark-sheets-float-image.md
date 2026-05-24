@@ -24,13 +24,8 @@
 - **图片位置参数要精确**：锚点单元格的行列索引和偏移量决定了图片位置，设置不当会导致图片遮挡数据
 - **创建后必须验证**：调用 `+float-image-list` 确认图片位置和大小正确
 
-reference_id 的映射规则：
-- `image_uri`：`<|image|>:abcdef` 或者 `<|superscript|>:abcdef-<|image|>:abcdef`
-- `float_image_id`：`<|float_image|>:abcdef`
-其中 `abcdef` 为实际的对象 ID，占位符仅用于示意，不可直接使用。
-
 `image_uri` 与 `image_token` 是「指定图片资源」的两种等价方式（与 `+cells-set` 中 `embed-image` 的语义一致）：
-- `image_uri`：上传链路给到的图片 reference_id（如 `<|image|>:abcdef`），由系统自动转 fileToken
+- `image_uri`：图片上传链路返回的 reference_id，由系统自动转 fileToken
 - `image_token`：图片 fileToken，常见来源是 `+float-image-list` 返回的 `image_token`（适合"换皮不换位置"等基于已有图片的复用场景）
 - create 时二者必须有其一；update 时**仅在需要替换图片本身时**传入新的 `image_uri` 或 `image_token`，不传则保留原图。
 
@@ -61,7 +56,7 @@ _公共四件套 · 系统：`--dry-run`_
 | --- | --- | --- | --- |
 | `--image-name` | string | required | 图片名称，含扩展名（如 `logo.png`） |
 | `--image-token` | string | xor | 图片 file_token（与 `--image-uri` 二选一）。常见来源：`+float-image-list` 返回的 `image_token` |
-| `--image-uri` | string | xor | 图片 reference_id（与 `--image-token` 二选一）；形如 `<\|image\|>:abcdef` 这种带前缀的字符串 |
+| `--image-uri` | string | xor | 图片 reference_id（与 `--image-token` 二选一）；图片上传链路返回的 reference_id |
 | `--position-row` | int | required | 图片左上角所在行（0-based） |
 | `--position-col` | string | required | 图片左上角所在列（列字母，如 `A` / `B`） |
 | `--size-width` | int | required | 图片宽度（像素） |
@@ -79,7 +74,7 @@ _公共四件套 · 系统：`--dry-run`_
 | `--float-image-id` | string | required | 目标图片 id |
 | `--image-name` | string | optional | 图片名称，含扩展名（如 `logo.png`） |
 | `--image-token` | string | xor | 图片 file_token（与 `--image-uri` 二选一）。常见来源：`+float-image-list` 返回的 `image_token` |
-| `--image-uri` | string | xor | 图片 reference_id（与 `--image-token` 二选一）；形如 `<\|image\|>:abcdef` 这种带前缀的字符串 |
+| `--image-uri` | string | xor | 图片 reference_id（与 `--image-token` 二选一）；图片上传链路返回的 reference_id |
 | `--position-row` | int | optional | 图片左上角所在行（0-based） |
 | `--position-col` | string | optional | 图片左上角所在列（列字母，如 `A` / `B`） |
 | `--size-width` | int | optional | 图片宽度（像素） |
@@ -116,9 +111,9 @@ lark-cli sheets +float-image-create --url "..." --sheet-id "$SID" \
   --image-name "logo.png" --image-token "$TOKEN" \
   --position-row 0 --position-col A --size-width 200 --size-height 150
 
-# 用 reference_id（部分租户直接引用）
+# 用 reference_id（图片上传链路返回的 image reference_id；与 --image-token 二选一）
 lark-cli sheets +float-image-create --url "..." --sheet-id "$SID" \
-  --image-name "logo.png" --image-uri "<|image|>:abcdef" \
+  --image-name "logo.png" --image-uri "$IMAGE_URI" \
   --position-row 2 --position-col B --size-width 300 --size-height 200 --z-index 1
 ```
 
@@ -141,7 +136,7 @@ lark-cli sheets +float-image-update --url "..." --sheet-id "$SID" \
 ### `+float-image-delete`
 
 ```bash
-lark-cli sheets +float-image-delete --url "..." --float-image-id "$IMG_ID" --yes
+lark-cli sheets +float-image-delete --url "..." --sheet-id "$SID" --float-image-id "$IMG_ID" --yes
 ```
 
 ### Validate / DryRun / Execute 约束

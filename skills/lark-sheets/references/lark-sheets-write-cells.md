@@ -82,10 +82,7 @@ Step 2: `+cells-set` — range="A2", cells 含 value + cell_styles + border_styl
 - 若目标区域涉及合并单元格，不要向合并区域中的非左上角单元格写入数据；如需写入，应改写合并区域左上角单元格，或先调整/取消合并区域
 - **构造 `range` 时行号必须基于逻辑行号**：如果之前通过 `+csv-get` 读取了数据，CSV 中被双引号包裹的多行字段（如 `"2026年3月2日\n星期一"`）是**一个单元格**，不是两行。写入时的行号必须按逻辑记录计算，不能按物理换行符计数，否则 `range` 会整体偏移导致写入到错误位置
 
-⚠️ **"样式与原表一致"必须包含 `border_styles`（高频致命错误）**：当用户说"样式和原表一致"、"保持原表格式"、"边框继承"等要求时，cells 里的 `cell_styles` **不能只传 `font_size` / `horizontal_alignment` / `vertical_alignment`**——这几项只覆盖字体和对齐，**不包含边框**。边框必须用独立的 `border_styles` 字段传（或在源 cell 用 `+cells-get` 读出来再原样复制）。
-- **反模式**：`cells=[[{cell_styles:{font_size:16, horizontal_alignment:"center", vertical_alignment:"middle"}}]]`（字体+对齐都有，但**新 cell 仍然没边框**，视觉上与原表断裂）
-- **正确做法**：`cell_styles` + `border_styles` 一起传，`border_styles` 覆盖 top/bottom/left/right 四条边（或至少 data 区该加的几条），确保视觉连续
-- 特别是**新列/新行**场景，新 cell 底子里本来就没边框，如果不显式传 `border_styles`，--copy-to-range 复制的模板也没边框 → 整列/整行无边框
+> 用户说"样式和原表一致 / 保持原表格式 / 边框继承"时同理：`cell_styles` 只覆盖字体和对齐、**不含边框**，边框必须用独立 `border_styles` 字段传——完整继承清单见上方「新增列 / 新增行的样式继承」。
 
 ⚠️ **公式写入必须自己校验结果（后端不会报语法错）**：`+cells-set` 写公式时，即便公式有括号不配对（如 `=IFERROR(VALUE(REGEXEXTRACT(D5, "\d+"))), 0)` 比 IFERROR 多一个 `)`）或用了飞书不支持的函数（如 `GOOGLETRANSLATE` / `CUBEVALUE`），**后端工具也会返回 `updated_cells_count=N, rc=0` 的"成功"**——错误会静默写进单元格显示为 `#VALUE!` / `#NAME?` / `#REF!`。因此：
 1. **写完立即读回**：`+cells-set` 后紧跟 `+csv-get`（或 `+cells-get`）读目标范围前几行，检查是否出现 `#VALUE!` / `#NAME?` / `#REF!` / `#N/A` / `#DIV/0!` / `#NUM!`
@@ -118,35 +115,10 @@ Step 2: `+cells-set` — range="A2", cells 含 value + cell_styles + border_styl
 
 **正确做法**（二选一）：
 
-**做法 A（推荐）：两步走——先铺样式、再覆内容**
+- **做法 A（推荐）**：按上方「内容与样式分离写入」两步法——先用模板单元格 + `--copy-to-range` 铺**完整样式**（`cell_styles` + `border_styles` 都要，不能只铺 border，否则新行字体 / 对齐 / 背景色全裸奔），再单独 `+cells-set` 写 value / formula。汇总行的 `cell_styles` 要点（bold / 背景色 / 上边框）见 `lark-sheets-visual-standards` 的「场景一 → 1A. 添加汇总行 / 表头行」。
+- **做法 B**：一次写入，但每个 cell（含空白格）都显式带 `cell_styles` + `border_styles`，**不能用 `{}`**。
 
-```
-Step 1: 用模板单元格 + --copy-to-range 铺"完整样式"（不是只铺 border）到新区域
-  `+cells-set` — range="A11", cells=[[{
-    border_styles: {...},
-    cell_styles: { /* 按行性质填充：数据行继承数据区样式；汇总行见 lark-sheets-visual-standards */ }
-  }]], --copy-to-range="A11:H11"
-
-Step 2: 再用 `+cells-set` 单独写具体 value/formula（不再传样式，避免覆盖）
-  `+cells-set` — range="A11", cells=[[{value: "平均分"}]]
-  `+cells-set` — range="C11:F11", cells=[[{formula: "=AVERAGE(C2:C10)"}, {formula: "=AVERAGE(D2:D10)"}, ...]]
-```
-
-⚠️ **Step 1 `cell_styles` 禁止留空**：只铺 border、不铺 `cell_styles`，等于新行从格式上"裸奔"——没字体、没对齐、没背景色。如果新行是汇总行，这意味着 bold 丢失，用户感受"没做样式"。Step 1 的 `cell_styles` 要么继承源区块（`+cells-get` 读相邻已有行样式后复用），要么按汇总行样式要点（见 `lark-sheets-visual-standards` 的「场景一 → 1A. 添加汇总行 / 表头行」）配齐。
-
-**做法 B：一次写入但每个 cell 都显式带样式**
-
-```
-`+cells-set` — range="A11:H11", cells=[[
-  {value: "平均分", cell_styles: {...}, border_styles: {...}},
-  {value: "",      cell_styles: {...}, border_styles: {...}},   ← B11 不能是 {}，要显式带 border
-  {formula: "=AVERAGE(C2:C10)", cell_styles: {...}, border_styles: {...}},
-  {formula: "=AVERAGE(D2:D10)", cell_styles: {...}, border_styles: {...}},
-  ...
-]]
-```
-
-**判断是不是"新行"**：`+csv-get` 返回的 `current_region` 是 `A1:H10`，你要写入的 range 是 `A11:H11`（超出 `current_region` 右/下边界），就是新行——必须按上述做法处理边框。
+**判断是不是"新行"**：写入 range 超出 `+csv-get` 返回的 `current_region` 右 / 下边界（如 `current_region=A1:H10`、写 `A11:H11`）即新行，必须按上述做法补边框。
 
 ## 工具选择
 

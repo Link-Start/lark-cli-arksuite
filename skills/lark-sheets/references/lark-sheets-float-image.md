@@ -24,10 +24,14 @@
 - **图片位置参数要精确**：锚点单元格的行列索引和偏移量决定了图片位置，设置不当会导致图片遮挡数据
 - **创建后必须验证**：调用 `+float-image-list` 确认图片位置和大小正确
 
-`image_uri` 与 `image_token` 是「指定图片资源」的两种等价方式（与 `+cells-set` 中 `embed-image` 的语义一致）：
-- `image_uri`：图片上传链路返回的 reference_id，由系统自动转 fileToken
-- `image_token`：图片 fileToken，常见来源是 `+float-image-list` 返回的 `image_token`（适合"换皮不换位置"等基于已有图片的复用场景）
-- create 时二者必须有其一；update 时**仅在需要替换图片本身时**传入新的 `image_uri` 或 `image_token`，不传则保留原图。
+`--image-uri` 与 `--image-token` 是「指定**已有**图片资源」的两种等价方式（XOR，create 时必给其一）：
+- `--image-token`：图片 fileToken。常见来源是 `+float-image-list` 返回的 `image_token`（适合"换皮不换位置"等复用已有图片的场景）。
+- `--image-uri`：图片上传句柄（image URI），由系统自动转 fileToken。
+- update 时**仅在需要替换图片本身时**才传新的 `--image-uri` / `--image-token`，不传则保留原图。
+
+⚠️ **本 shortcut 不接受本地图片文件路径**——只能引用已存在的图片资源。若手上只有本地新图（如 `logo.png`）：
+- **可接受单元格内嵌图** → 直接用 `+cells-set-image --image <本地路径>`（见 `lark-sheets-write-cells`，它支持本地路径）。
+- **必须是浮动图片** → 需先把本地图片上传到飞书拿到 file_token（上传步骤不在本 skill 内，例如经云空间），再把该 token 传给 `--image-token`。
 
 ## Shortcuts
 

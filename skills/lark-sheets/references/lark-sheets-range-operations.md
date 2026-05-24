@@ -49,13 +49,9 @@
 5. **新增合并时数据保护**：合并前确认目标区域只有左上角有数据，其余单元格为空，否则合并会导致非左上角的数据丢失。
 6. **批量取消合并一次调用即可**：当一个范围（整列 `A:A`、整行 `3:3`、矩形 `A1:D100`）内存在多个合并区域，直接调一次 `+cells-unmerge` 传入这个大范围，会一次性取消该范围内所有合并区域；**不要**为每个合并区域单独调用 unmerge，也不要用 `+batch-update` 拆成多次 unmerge。
 
-**⚠️ 批量操作必须用 `+batch-update`**：
+**⚠️ 批量操作必须用 `+batch-update`**：对**多个**不同区域执行 `+cells-merge` 或 `+rows-resize / +cols-resize` 时，禁止逐个调用，合并为单次原子 `+batch-update`（语义与 `--operations` 入参格式见 `lark-sheets-batch-update`）。
 
-当需要对**多个**不同区域执行 `+cells-{merge|unmerge}`（merge）或 `+rows-resize / +cols-resize` 时，**禁止逐个调用**，必须使用 `+batch-update`（参见 `lark-sheets-batch-update`）将所有操作合并为一次原子请求。逐个调用慢且非原子。
-
-**例外**：`+cells-unmerge` 原生支持对覆盖多个合并区域的大 range 一次性取消，应直接单次调用，**不要**拆进 `+batch-update`。
-
-> 多操作组合示例（合并多区域、批量调整列宽行高的 `+batch-update --operations` JSON 入参格式）见 `lark-sheets-batch-update` 文档。
+**唯一例外**：`+cells-unmerge` 原生支持传一个大 range 一次性取消其中所有合并区域，应直接单次调用，**不要**拆进 `+batch-update`。
 
 **⚠️ sort 操作前必读：确认目标列的数据类型**
 

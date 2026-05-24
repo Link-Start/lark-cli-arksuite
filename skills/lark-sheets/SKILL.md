@@ -21,7 +21,16 @@ metadata:
 | --- | --- | --- |
 | 工作表（sheet） | 子表、tab、标签页 | spreadsheet 内的单张表；`sheet_id` 是其稳定标识 |
 | 电子表格（spreadsheet） | 工作簿、表格 | 顶层容器；由 `--url` 或 `--spreadsheet-token` 定位 |
-| reference_id | id | 各 `*-id` flag（`--sheet-id` / `--chart-id` / `--pivot-table-id` / `--group-id` / `--view-id` 等）接受的对象标识符，统称 reference_id |
+| reference_id | id | **表内对象**的稳定标识，即各对象主键 flag 接受的值（见下表）。⚠️ 与 `lark-sheets-float-image` 的 `--image-uri`（图片上传句柄）不是一回事，后者不属于 reference_id |
+
+每类对象用各自的主键 flag 定位（命名不统一，按此表对照，不要凭直觉拼）：
+
+| 对象 | 主键 flag | 对象 | 主键 flag |
+| --- | --- | --- | --- |
+| 工作表 sheet | `--sheet-id` | 条件格式规则 | `--rule-id` |
+| 图表 chart | `--chart-id` | 筛选视图 | `--view-id` |
+| 透视表 pivot | `--pivot-table-id` | 迷你图（按组） | `--group-id` |
+| 浮动图片 | `--float-image-id` | | |
 
 ## References
 
@@ -61,6 +70,7 @@ metadata:
 **公共四件套** = `--url` / `--spreadsheet-token` / `--sheet-id` / `--sheet-name`，分成两组 XOR，**每组都必须给且只能给一个**（XOR = 二选一必填，不是"可选"）：
 
 1. **spreadsheet 定位（必填）**：`--url` 与 `--spreadsheet-token` 二选一，**必须给其中之一**。两个都不给 → 校验报错 `specify at least one of --url or --spreadsheet-token`；两个都给 → 互斥冲突。
+   - **例外**：`+workbook-create` 是新建一个还不存在的表格，**不接受任何 spreadsheet / sheet 定位 flag**（只有 `--title` / `--folder-token` / `--headers` / `--values`）。
 2. **sheet 定位（公共四件套 shortcut 必填）**：`--sheet-id` 与 `--sheet-name` 二选一，**必须给其中之一**。两个都不给 → 校验报错 `specify at least one of --sheet-id or --sheet-name`。
    - ⚠️ **`--range` 里的 `Sheet1!` 前缀不能替代 sheet 定位**：即使写了 `--range "Sheet1!A1:B2"`，仍**必须**额外传 `--sheet-id` 或 `--sheet-name`，否则照样报上面的错。
    - **例外**：徽章标为 `_公共：URL/token（无 sheet 定位）…_` 的 shortcut（如 `+workbook-info` / `+workbook-export` / `+batch-update` / `+dropdown-get|update|delete` / `+cells-batch-set-style` / `+cells-batch-clear` / `+sheet-create`）**不接受也不需要** sheet 定位，只给一组 spreadsheet 定位即可。
@@ -91,6 +101,11 @@ lark-cli sheets <shortcut> <workbook 定位> <sheet 定位> <其它 flag>
 | `--flag-name` | string | 否 | 配合 `--print-schema` 使用，指定要打印 JSON Schema 的 flag 名（不带 `--` 前缀，如 `cells` / `properties` / `operations`）。 |
 
 **Agent 使用提示**：写复合 JSON flag（`--cells` / `--properties` / `--operations` / `--border-styles` / `--sort-keys` / `--options` 等）时，如果对结构不确定，先跑 `lark-cli sheets <shortcut> --print-schema --flag-name <name>` 把完整 JSON Schema 读出来再构造 payload，比靠 reference 的速查表更精确，也避免因为字段拼写或缺失被服务端拒绝。reference 的 `## Schemas` 段只给一层结构，深层只能靠 `--print-schema` 或 `## Examples` 的真实示例。
+
+### flag 内容类型与输出约定（术语速记）
+
+- flag 表里 JSON 类入参标三类：**复合 JSON** = 深层嵌套对象（用 `--print-schema` 取完整结构）；**简单 JSON** = 一维 / 二维标量数组（如 `["sheet1!A1:B2",...]` / `[["alice",95]]`，结构简单无需 print-schema）；**非 JSON 文本** = 原样文本（如 CSV）。`--print-schema` 只对**复合 JSON** flag 有效（同一 shortcut 的简单 JSON flag 如 `--colors` 不在此列）。
+- **envelope**：所有 shortcut 返回统一外层结构 `{ok, identity, data, ...}`。正文里 `envelope.data` 指业务数据层（如 `+csv-get` 的 `annotated_csv`）；`envelope.meta.verification` 指写操作执行后 CLI 自动回读、给出的"预期 vs 实际"对比。
 
 ## 复合 JSON / 大入参：优先 stdin
 

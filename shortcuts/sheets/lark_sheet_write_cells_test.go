@@ -174,8 +174,9 @@ func TestDropdownSet_CellsShape(t *testing.T) {
 }
 
 // TestDropdownSet_ColorsLongerThanOptions checks the early Validate-time
-// error when --colors length exceeds --options. Equal-or-shorter lengths
-// are accepted (server cycles the rest through a built-in palette).
+// error when --colors length exceeds the dropdown source size (options
+// length in list mode). Equal-or-shorter lengths are accepted (server
+// cycles the rest through a built-in palette).
 func TestDropdownSet_ColorsLongerThanOptions(t *testing.T) {
 	t.Parallel()
 	_, stderr, err := runShortcutCapturingErr(t, DropdownSet, []string{
@@ -188,7 +189,7 @@ func TestDropdownSet_ColorsLongerThanOptions(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected --colors length error, got nil")
 	}
-	if !strings.Contains(stderr, "must not exceed --options length") && !strings.Contains(err.Error(), "must not exceed --options length") {
+	if !strings.Contains(stderr, "must not exceed dropdown source size") && !strings.Contains(err.Error(), "must not exceed dropdown source size") {
 		t.Errorf("error message missing length-overflow hint:\nerr=%v\nstderr=%s", err, stderr)
 	}
 }
@@ -212,6 +213,98 @@ func TestDropdownSet_ColorsShorterAccepted(t *testing.T) {
 	colors, _ := dv["highlight_colors"].([]interface{})
 	if len(colors) != 2 {
 		t.Errorf("highlight_colors length = %d, want 2 (forwarded as-is)", len(colors))
+	}
+}
+
+// TestDropdownSet_ListFromRange verifies --source-range emits
+// data_validation.type=listFromRange + data_validation.range, paired with
+// --colors / --highlight propagating to highlight_colors / enable_highlight.
+func TestDropdownSet_ListFromRange(t *testing.T) {
+	t.Parallel()
+	body := parseDryRunBody(t, DropdownSet, []string{
+		"--url", testURL, "--sheet-id", testSheetID,
+		"--range", "B2:B21",
+		"--source-range", "Sheet1!T1:T3",
+		"--colors", `["#cce8ff","#ffd6e7","#e6e6e6"]`,
+		"--highlight",
+	})
+	input := decodeToolInput(t, body, "set_cell_range")
+	cells, _ := input["cells"].([]interface{})
+	row0, _ := cells[0].([]interface{})
+	cell, _ := row0[0].(map[string]interface{})
+	dv, _ := cell["data_validation"].(map[string]interface{})
+	if dv["type"] != "listFromRange" {
+		t.Errorf("data_validation.type = %v, want listFromRange", dv["type"])
+	}
+	if dv["range"] != "Sheet1!T1:T3" {
+		t.Errorf("data_validation.range = %v, want Sheet1!T1:T3 (verbatim, server normalizes)", dv["range"])
+	}
+	if _, hasItems := dv["items"]; hasItems {
+		t.Errorf("listFromRange mode should not emit `items`: %#v", dv)
+	}
+	if dv["enable_highlight"] != true {
+		t.Errorf("data_validation.enable_highlight = %v, want true", dv["enable_highlight"])
+	}
+	colors, _ := dv["highlight_colors"].([]interface{})
+	if len(colors) != 3 {
+		t.Errorf("highlight_colors length = %d, want 3", len(colors))
+	}
+}
+
+// TestDropdownSet_ListFromRange_ColorsLongerThanCells rejects --colors
+// longer than the source range cell count (T1:T3 has 3 cells, 4 colors
+// must be refused).
+func TestDropdownSet_ListFromRange_ColorsLongerThanCells(t *testing.T) {
+	t.Parallel()
+	_, stderr, err := runShortcutCapturingErr(t, DropdownSet, []string{
+		"--url", testURL, "--sheet-id", testSheetID,
+		"--range", "B2:B21",
+		"--source-range", "Sheet1!T1:T3",
+		"--colors", `["#a","#b","#c","#d"]`,
+		"--highlight",
+		"--dry-run",
+	})
+	if err == nil {
+		t.Fatal("expected --colors length error, got nil")
+	}
+	if !strings.Contains(stderr, "must not exceed dropdown source size") && !strings.Contains(err.Error(), "must not exceed dropdown source size") {
+		t.Errorf("error message missing source-size hint:\nerr=%v\nstderr=%s", err, stderr)
+	}
+}
+
+// TestDropdownSet_XorBothSet rejects passing both --options and
+// --source-range.
+func TestDropdownSet_XorBothSet(t *testing.T) {
+	t.Parallel()
+	_, stderr, err := runShortcutCapturingErr(t, DropdownSet, []string{
+		"--url", testURL, "--sheet-id", testSheetID,
+		"--range", "B2:B21",
+		"--options", `["a","b"]`,
+		"--source-range", "Sheet1!T1:T3",
+		"--dry-run",
+	})
+	if err == nil {
+		t.Fatal("expected XOR error, got nil")
+	}
+	if !strings.Contains(stderr, "mutually exclusive") && !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error message missing XOR hint:\nerr=%v\nstderr=%s", err, stderr)
+	}
+}
+
+// TestDropdownSet_XorNeitherSet rejects passing neither --options nor
+// --source-range.
+func TestDropdownSet_XorNeitherSet(t *testing.T) {
+	t.Parallel()
+	_, stderr, err := runShortcutCapturingErr(t, DropdownSet, []string{
+		"--url", testURL, "--sheet-id", testSheetID,
+		"--range", "B2:B21",
+		"--dry-run",
+	})
+	if err == nil {
+		t.Fatal("expected required-one error, got nil")
+	}
+	if !strings.Contains(stderr, "one of --options") && !strings.Contains(err.Error(), "one of --options") {
+		t.Errorf("error message missing required-one hint:\nerr=%v\nstderr=%s", err, stderr)
 	}
 }
 

@@ -1867,7 +1867,7 @@
         "name": "options",
         "kind": "own",
         "type": "string",
-        "required": "required",
+        "required": "xor",
         "desc": "Options as a JSON array, e.g. `[\"opt1\",\"opt2\"]`; up to 500 items, each ≤100 chars, no commas",
         "input": [
           "file",
@@ -1898,6 +1898,13 @@
         "type": "bool",
         "required": "optional",
         "desc": "Enable pill-background color highlighting for dropdown options; default `false`. Maps to server `data_validation.enable_highlight`. When `true`, colors come from `--colors` in order; options beyond `--colors` length cycle through a built-in 10-color palette."
+      },
+      {
+        "name": "source-range",
+        "kind": "own",
+        "type": "string",
+        "required": "xor",
+        "desc": "Source range for listFromRange dropdown (A1 + sheet prefix, e.g. `Sheet1!T1:T3`); maps to server `data_validation.range` and auto-sets `data_validation.type='listFromRange'`. XOR with `--options`: pass `--options` for an inline list (type=list), pass this for a range reference (type=listFromRange). `--colors` length rule unchanged (≤ source range cell count); `--highlight` / `--multiple` behave the same."
       },
       {
         "name": "dry-run",
@@ -2795,7 +2802,7 @@
         "name": "options",
         "kind": "own",
         "type": "string",
-        "required": "required",
+        "required": "xor",
         "desc": "Options as a JSON array (e.g. `[\"opt1\",\"opt2\"]`)",
         "input": [
           "file",
@@ -2826,6 +2833,13 @@
         "type": "bool",
         "required": "optional",
         "desc": "Enable pill-background color highlighting for dropdown options; default `false`. Maps to server `data_validation.enable_highlight`. Works with `--colors`; if `--colors` is omitted, all options cycle through a built-in 10-color palette."
+      },
+      {
+        "name": "source-range",
+        "kind": "own",
+        "type": "string",
+        "required": "xor",
+        "desc": "Source range for listFromRange dropdown (A1 + sheet prefix, e.g. `Sheet1!T1:T3`); maps to server `data_validation.range` and auto-sets `data_validation.type='listFromRange'`. XOR with `--options`: pass `--options` for an inline list (type=list), pass this for a range reference (type=listFromRange). `--colors` length rule unchanged (≤ source range cell count); `--highlight` / `--multiple` behave the same."
       },
       {
         "name": "dry-run",

@@ -122,34 +122,32 @@ Step 2: `+cells-set` — range="A2", cells 含 value + cell_styles + border_styl
 
 ## Dropdown 选项 + 配色（`+dropdown-set` / `+dropdown-update`）
 
-### 两种选项模式（XOR）
+### 选项怎么来：`--options` 与 `--source-range` 二选一
 
-| 模式 | flag | server `data_validation.type` | 适用场景 |
-|---|---|---|---|
-| inline 列表 | `--options '["a","b","c"]'` | `list` | 固定选项集，写死在命令里 |
-| 引用 range | `--source-range 'Sheet1!T1:T3'` | `listFromRange` | 选项来源是已有单元格，跟数据动态同步；适合维护一张「枚举值」列后多处引用 |
+| flag | 选项来源 | 适用场景 |
+|---|---|---|
+| `--options '["a","b","c"]'` | 写在命令里的固定列表 | 选项集是常量、不需要事后维护 |
+| `--source-range 'Sheet1!T1:T3'` | 已有单元格里的值 | 选项要跟数据动态同步；想维护一张「枚举值」列后多处引用 |
 
-**`--options` 和 `--source-range` 必须二选一传一个**（CLI 端 Validate 阶段拦截 0 个或 2 个的情况）。`--source-range` 用 A1 + sheet 前缀写法，跟目标 `--range` 可以是同 sheet 也可以是其它 sheet（如 `Refs!A1:A10`）。
+两个 flag **必须传一个、且只能传一个**——同时传或都不传，CLI 会立刻报错。`--source-range` 用 A1 + sheet 前缀写法（如 `Sheet1!T1:T3`），可以指同 sheet 也可以指其它 sheet（如 `Refs!A1:A10`）。
 
-### 配色（两种模式通用）
+### 配色：`--colors` 与 `--highlight`（与选项模式无关）
 
-下拉的胶囊背景色高亮由另外两个 flag 控制，跟选项模式正交，映射到 server `data_validation` 的两个字段：
+- `--highlight`：开下拉选项的胶囊背景色总开关；不传默认 `false`、无配色。
+- `--colors '["#hex","#hex",...]'`：每个选项对应一种胶囊背景色；只在 `--highlight` 也传时生效。
 
-| CLI flag | server 字段 | 类型 | 含义 |
-|---|---|---|---|
-| `--highlight` | `enable_highlight` | bool | 总开关；为 `false`（默认）时所有选项无背景色 |
-| `--colors` | `highlight_colors` | string[] | RGB hex 数组，如 `["#1FB6C1","#F006C2"]` |
+长度规则：
+- `--colors` 长度**可以短于**选项数（list 模式短于 `--options` 长度，listFromRange 模式短于 `--source-range` 的单元格数），未指定的选项按内置 10 色色板循环补色；
+- `--colors` 长度**不能长于**选项数——CLI 端 Validate 阶段就会拦截，错误信息形如 `--colors length (4) must not exceed dropdown source size (3)`。
 
-规则：
-
-- **`--colors` 长度可以短**：list 模式下 ≤ `--options` 长度，listFromRange 模式下 ≤ `--source-range` 的单元格数（剩余项 server 按内置 10 色色板循环补色），**但不能长于**——CLI 端 Validate 阶段会拦截长于的情况。
-- **`--colors` 仅在 `--highlight=true` 时生效**——单独传 `--colors` 而不传 `--highlight`，server 不会显示任何背景色。
-- 完全不传两者，下拉就是纯文本选项（无配色）。
-- 想让所有选项都有颜色但不指定具体色——只传 `--highlight`，server 用内置色板循环。
+排列组合：
+- 想要纯文本下拉、无配色 → 都不传 `--highlight` / `--colors`；
+- 想要每个选项指定确切颜色 → 同时传 `--highlight` 和 `--colors`；
+- 想要所有选项都有颜色但不指定具体色 → 只传 `--highlight`，颜色按内置色板循环。
 
 ### 最小用例
 
-**list 模式**（4 个 options 配 3 个 colors —— 前 3 个用指定色，第 4 个按内置色板补色）：
+**`--options` 模式**（4 个选项配 3 个颜色——前 3 个指定色，第 4 个按内置色板补）：
 
 ```
 lark-cli sheets +dropdown-set \
@@ -160,7 +158,7 @@ lark-cli sheets +dropdown-set \
   --highlight
 ```
 
-**listFromRange 模式**（源 range 在同 sheet 的 T1:T3，3 个 options 配 3 个 colors）：
+**`--source-range` 模式**（先在 Sheet1!T1:T3 维护「男/女/保密」三行，再让 B2:B21 引用它）：
 
 ```
 lark-cli sheets +dropdown-set \
@@ -171,7 +169,7 @@ lark-cli sheets +dropdown-set \
   --highlight
 ```
 
-> ⚠️ **`--source-range` 必须带 sheet 前缀**（即使跟 `--range` 同 sheet），server 会自动把它规范化成 `$T$1:$T$3`（绝对引用）落库；回读时 sheet 前缀已被剥掉，agent 拿 read 结果再回写需要自己补前缀。
+> ⚠️ **`--source-range` 必须带 sheet 前缀**（即使跟 `--range` 同 sheet）。注意一个坑：回读这种 listFromRange 下拉单元格时，`data_validation.range` 看起来不带 sheet 前缀（形如 `$T$1:$T$3`），如果要把读出来的 range 反过来写回 `--source-range`，**必须自己重新补上 sheet 前缀**，否则会被拒。
 
 `+dropdown-update`（多 range 批量更新）的所有 flag 语义与 `+dropdown-set` 完全一致；只是目标 `--ranges` 由单值变成 JSON 数组（每项带 sheet 前缀），同一份选项 + 配色应用到所有 range。
 

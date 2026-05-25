@@ -340,7 +340,8 @@ func dropdownSetInput(runtime flagView, token, sheetID, sheetName string) (map[s
 //	--colors    -> highlight_colors         (string array, hex)
 //	--highlight -> enable_highlight         (bool)
 //
-// --colors length must equal --options length when both are set.
+// --colors length may be shorter than --options (server cycles remaining
+// options through a built-in 10-color palette) but must not exceed it.
 func buildDropdownValidation(runtime flagView) (map[string]interface{}, error) {
 	options, err := requireJSONArray(runtime, "options")
 	if err != nil {
@@ -355,8 +356,8 @@ func buildDropdownValidation(runtime flagView) (map[string]interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(colors) != len(options) {
-			return nil, common.FlagErrorf("--colors length (%d) must equal --options length (%d)", len(colors), len(options))
+		if len(colors) > len(options) {
+			return nil, common.FlagErrorf("--colors length (%d) must not exceed --options length (%d)", len(colors), len(options))
 		}
 		dv["highlight_colors"] = colors
 	}
@@ -370,8 +371,8 @@ func buildDropdownValidation(runtime flagView) (map[string]interface{}, error) {
 }
 
 // validateDropdownOptionsColors validates --options is a JSON array and that
-// --colors (when set) has matching length. Returns the options length so
-// callers can size their cells matrix at Validate time without re-parsing.
+// --colors (when set) is no longer than --options. Returns the options length
+// so callers can size their cells matrix at Validate time without re-parsing.
 func validateDropdownOptionsColors(runtime flagView) (int, error) {
 	options, err := requireJSONArray(runtime, "options")
 	if err != nil {
@@ -382,8 +383,8 @@ func validateDropdownOptionsColors(runtime flagView) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if len(colors) != len(options) {
-			return 0, common.FlagErrorf("--colors length (%d) must equal --options length (%d)", len(colors), len(options))
+		if len(colors) > len(options) {
+			return 0, common.FlagErrorf("--colors length (%d) must not exceed --options length (%d)", len(colors), len(options))
 		}
 	}
 	return len(options), nil

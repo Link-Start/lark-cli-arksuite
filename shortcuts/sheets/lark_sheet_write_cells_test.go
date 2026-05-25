@@ -173,22 +173,45 @@ func TestDropdownSet_CellsShape(t *testing.T) {
 	}
 }
 
-// TestDropdownSet_ColorsLengthMismatch checks the early Validate-time
-// error when --colors length doesn't match --options.
-func TestDropdownSet_ColorsLengthMismatch(t *testing.T) {
+// TestDropdownSet_ColorsLongerThanOptions checks the early Validate-time
+// error when --colors length exceeds --options. Equal-or-shorter lengths
+// are accepted (server cycles the rest through a built-in palette).
+func TestDropdownSet_ColorsLongerThanOptions(t *testing.T) {
 	t.Parallel()
 	_, stderr, err := runShortcutCapturingErr(t, DropdownSet, []string{
 		"--url", testURL, "--sheet-id", testSheetID,
 		"--range", "A2:A4",
-		"--options", `["a","b","c"]`,
-		"--colors", `["#FFE699","#bff7d9"]`,
+		"--options", `["a","b"]`,
+		"--colors", `["#FFE699","#bff7d9","#ffb3b3"]`,
 		"--dry-run",
 	})
 	if err == nil {
-		t.Fatal("expected --colors length mismatch error, got nil")
+		t.Fatal("expected --colors length error, got nil")
 	}
-	if !strings.Contains(stderr, "must equal --options length") && !strings.Contains(err.Error(), "must equal --options length") {
-		t.Errorf("error message missing length-mismatch hint:\nerr=%v\nstderr=%s", err, stderr)
+	if !strings.Contains(stderr, "must not exceed --options length") && !strings.Contains(err.Error(), "must not exceed --options length") {
+		t.Errorf("error message missing length-overflow hint:\nerr=%v\nstderr=%s", err, stderr)
+	}
+}
+
+// TestDropdownSet_ColorsShorterAccepted verifies the partial-colors case:
+// fewer colors than options is legal — array is forwarded as-is and the
+// server fills remaining slots from its default palette.
+func TestDropdownSet_ColorsShorterAccepted(t *testing.T) {
+	t.Parallel()
+	body := parseDryRunBody(t, DropdownSet, []string{
+		"--url", testURL, "--sheet-id", testSheetID,
+		"--range", "A2:A4",
+		"--options", `["a","b","c","d"]`,
+		"--colors", `["#FFE699","#bff7d9"]`,
+	})
+	input := decodeToolInput(t, body, "set_cell_range")
+	cells, _ := input["cells"].([]interface{})
+	row0, _ := cells[0].([]interface{})
+	cell, _ := row0[0].(map[string]interface{})
+	dv, _ := cell["data_validation"].(map[string]interface{})
+	colors, _ := dv["highlight_colors"].([]interface{})
+	if len(colors) != 2 {
+		t.Errorf("highlight_colors length = %d, want 2 (forwarded as-is)", len(colors))
 	}
 }
 

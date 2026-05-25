@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/larksuite/cli/internal/output"
+	"github.com/larksuite/cli/internal/validate"
 	"github.com/larksuite/cli/shortcuts/common"
 )
 
@@ -570,8 +572,17 @@ var CellsSetImage = common.Shortcut{
 		if rows != 1 || cols != 1 {
 			return common.FlagErrorf("--range %q must be exactly one cell (got %d×%d)", r, rows, cols)
 		}
-		if strings.TrimSpace(runtime.Str("image")) == "" {
+		imgPath := strings.TrimSpace(runtime.Str("image"))
+		if imgPath == "" {
 			return common.FlagErrorf("--image is required")
+		}
+		// Validate path safety here (not just at Execute) so --dry-run also
+		// rejects unsafe paths instead of giving a false-positive preview.
+		// SafeLocalFlagPath checks path safety only (abs/traversal/outside-cwd),
+		// not existence, so legitimate relative paths still dry-run cleanly;
+		// the Execute-time Stat below still reports a missing/unreadable file.
+		if _, err := validate.SafeLocalFlagPath("--image", imgPath); err != nil {
+			return output.ErrValidation("%s", err)
 		}
 		return nil
 	},

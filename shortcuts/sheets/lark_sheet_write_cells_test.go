@@ -488,6 +488,20 @@ func TestCellsSetImage_RangeMustBeSingleCell(t *testing.T) {
 	}
 }
 
+// TestCellsSetImage_DryRunRejectsUnsafePath guards that an unsafe --image path
+// (e.g. an absolute path) is rejected during Validate, so --dry-run fails the
+// same way as a real run instead of printing a misleading success preview.
+func TestCellsSetImage_DryRunRejectsUnsafePath(t *testing.T) {
+	t.Parallel()
+	stdout, stderr, err := runShortcutCapturingErr(t, CellsSetImage, []string{
+		"--url", testURL, "--sheet-id", testSheetID,
+		"--range", "A1", "--image", "/etc/hosts", "--dry-run",
+	})
+	if err == nil || !strings.Contains(stdout+stderr+err.Error(), "must be a relative path") {
+		t.Errorf("expected unsafe-path guard during dry-run; got=%s|%s|%v", stdout, stderr, err)
+	}
+}
+
 // TestRangeDimensions exercises the A1 parser's corner cases used by
 // cells-set-style / dropdown-set / rows-resize / cols-resize.
 func TestRangeDimensions(t *testing.T) {

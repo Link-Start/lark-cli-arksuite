@@ -560,7 +560,7 @@
                 ]
               },
               "items": {
-                "description": "列表选项（type='list' 时必填）",
+                "description": "列表选项",
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -1772,6 +1772,10 @@
             }
           }
         },
+        "required": [
+          "position",
+          "size"
+        ],
         "additionalProperties": {}
       }
     },
@@ -2798,6 +2802,10 @@
             }
           }
         },
+        "required": [
+          "position",
+          "size"
+        ],
         "additionalProperties": {}
       }
     },
@@ -3573,7 +3581,7 @@
     },
     "+dropdown-set": {
       "options": {
-        "description": "列表选项（type='list' 时必填）",
+        "description": "列表选项",
         "type": "array",
         "items": {
           "type": "string"
@@ -3582,7 +3590,7 @@
     },
     "+dropdown-update": {
       "options": {
-        "description": "列表选项（type='list' 时必填）",
+        "description": "列表选项",
         "type": "array",
         "items": {
           "type": "string"

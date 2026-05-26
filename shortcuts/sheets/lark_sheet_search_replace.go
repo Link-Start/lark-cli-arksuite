@@ -95,10 +95,10 @@ func searchReplaceOptions(runtime flagView) map[string]interface{} {
 		opts["match_entire_cell"] = true
 	}
 	if runtime.Bool("regex") {
-		opts["regex"] = true
+		opts["use_regex"] = true
 	}
 	if runtime.Bool("include-formulas") {
-		opts["include_formulas"] = true
+		opts["match_formulas"] = true
 	}
 	return opts
 }

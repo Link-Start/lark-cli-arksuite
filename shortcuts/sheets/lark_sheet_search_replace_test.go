@@ -33,7 +33,7 @@ func TestSearchReplaceShortcuts_DryRun(t *testing.T) {
 			},
 			wantOptions: map[string]interface{}{
 				"match_case": true,
-				"regex":      true,
+				"use_regex":  true,
 			},
 		},
 		{
@@ -49,8 +49,8 @@ func TestSearchReplaceShortcuts_DryRun(t *testing.T) {
 			wantOptions: map[string]interface{}{
 				"match_case":        true,
 				"match_entire_cell": true,
-				"regex":             true,
-				"include_formulas":  true,
+				"use_regex":         true,
+				"match_formulas":    true,
 			},
 		},
 		{

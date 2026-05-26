@@ -1,7 +1,7 @@
 ---
 name: lark-wiki
 version: 1.0.0
-description: "飞书知识库：管理知识空间、空间成员和文档节点。创建和查询知识空间、查看和管理空间成员、管理节点层级结构、在知识库中组织文档和快捷方式。当用户需要在知识库中查找或创建文档、浏览知识空间结构、查看或管理空间成员、移动或复制节点时使用。"
+description: "飞书知识库：管理知识空间、空间成员和文档节点。创建和查询知识空间、查看和管理空间成员、管理节点层级结构、在知识库中组织文档和快捷方式。当用户需要在知识库中查找或创建文档、浏览知识空间结构、查看或管理空间成员、移动或复制节点时使用。知识库 / 文档库的文档和目录盘点、整理、治理 workflow 统一从 lark-drive 进入；本 skill 只处理知识空间、成员和节点操作。"
 metadata:
   requires:
     bins: ["lark-cli"]
@@ -24,6 +24,7 @@ metadata:
 
 ## 快速决策
 
+- 用户要**盘点、整理、治理知识库 / 文档库中的文档和目录**，不要在本 skill 里展开 workflow；切到 [`lark-drive`](../lark-drive/SKILL.md)，按其 `lark-drive-knowledge-overview.md` 入口编排。
 - 用户给的是知识库 URL（`.../wiki/<token>`），且后续要查成员/加成员/删成员：先调用 `lark-cli wiki spaces get_node --params '{"token":"<wiki_token>"}'` 获取 `space_id`，后续成员接口统一使用 `space_id`。
 - 用户要**删除**知识空间（`wiki +delete-space`）但只给了名称或 URL：**不能**把名称 / URL 原样传给 `--space-id`，必须先解析出真实 `space_id`。解析方式：
   - URL（`.../wiki/<token>`）：`lark-cli wiki spaces get_node --params '{"token":"<wiki_token>"}' --format json`，读 `data.node.space_id`。

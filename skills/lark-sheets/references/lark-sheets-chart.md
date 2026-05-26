@@ -162,27 +162,139 @@ _创建/更新的图表属性_
 
 ### `+chart-create`
 
-示例：
+> **`snapshot.data` 必填 `dim1.serie.index` 或 `dim2.series[].index` 之一**（1-based，对应 `refs.value` 范围内的列序）。schema 允许传空 `{}` 但 server 运行时强制：缺则被拒为 `snapshot.data.dim1.serie.index and dim2.series[].index are both missing; at least one must be set`，即便侥幸通过也只会渲染空图。
+
+最小可用列图（inline 模式：refs 含表头行）：
 
 ```bash
-# 内联 JSON —— 最小列图骨架（inline 模式：refs 含表头行，首列/首行即类别/系列名）
-# 完整字段（堆叠/数据标签/detached/坐标轴等）跑 --print-schema --flag-name properties
 lark-cli sheets +chart-create --url "https://example.feishu.cn/sheets/shtXXX" \
-  --sheet-name "Sheet1" --properties '{"position":{"row":42,"col":"A"},"size":{"width":600,"height":400},"snapshot":{"data":{"refs":[{"value":"Sheet1!A1:B10"}]},"plotArea":{"plot":{"type":"column"}}}}'
+  --sheet-name "Sheet1" --properties '{
+    "position":{"row":42,"col":"A"},
+    "size":{"width":600,"height":400},
+    "snapshot":{
+      "data":{
+        "refs":[{"value":"Sheet1!A1:B10"}],
+        "dim1":{"serie":{"index":1}},
+        "dim2":{"series":[{"index":2}]}
+      },
+      "plotArea":{"plot":{"type":"column"}}
+    }
+  }'
 
 # 走文件（推荐配置较多时）
-lark-cli sheets +chart-create --url "https://example.feishu.cn/sheets/shtXXX" \
-  --sheet-name "Sheet1" --properties @chart-config.json
+lark-cli sheets +chart-create --url "..." --sheet-name "Sheet1" --properties @chart-config.json
 ```
 
-> **`--properties` JSON 关键字段**（结构见上方 `## Schemas` 段；详见语义内容章节）：
-> - `position.row` / `position.col` 必须留足空间，越界会被 API 拒
-> - `snapshot.data.headerMode`：默认 inline；当 refs 仅覆盖数据子集且语义表头在子集之外，必须 `detached` + `nameRef`
+**饼图专属示例**（`sectors` 必须嵌在 `plotArea.plot.series[i].sectors.sector[]`，且 `sector[].index` 1-based）：
+
+饼图比 column / bar 更复杂：`sectors` 是 object，里面再包一个**单数** `sector` 数组——CLI 不替你 normalize，写错路径会被 server schema 直接拒。
+
+```bash
+lark-cli sheets +chart-create --url "..." --sheet-name "Sheet1" --properties '{
+  "position":{"row":24,"col":"F"},
+  "size":{"width":600,"height":450},
+  "snapshot":{
+    "title":{"text":"各部门员工人数占比"},
+    "plotArea":{"plot":{
+      "type":"pie",
+      "series":[{
+        "index":1,
+        "sectors":{"sector":[{"index":1,"offsetRadius":0.05}]}
+      }]
+    }},
+    "data":{
+      "refs":[{"value":"Sheet1!A1:B11"}],
+      "dim1":{"serie":{"index":1,"aggregate":true}},
+      "dim2":{"series":[{"index":2,"aggregateType":"sum"}]}
+    }
+  }
+}'
+```
+
+**数据与表头分离（必须用 `detached` + `nameRef`）**：
+
+场景：周度销量明细表，真实表头在第 1 行（A1=周次、C1=订单量、D1=退款量），数据按 B 列"店铺"分段；用户只要"3 号店"那一段（第 11–17 行）。
+
+```bash
+lark-cli sheets +chart-create --url "..." --sheet-name "Sheet2" --properties '{
+  "position":{"row":7,"col":"F"},
+  "size":{"width":600,"height":360},
+  "snapshot":{
+    "title":{"text":"3 号店周度订单/退款"},
+    "plotArea":{"plot":{"type":"column"}},
+    "data":{
+      "headerMode":"detached",
+      "direction":"column",
+      "refs":[{"value":"Sheet2!A11:D17"}],
+      "dim1":{"serie":{"index":1,"nameRef":"Sheet2!A1"}},
+      "dim2":{"series":[
+        {"index":3,"nameRef":"Sheet2!C1"},
+        {"index":4,"nameRef":"Sheet2!D1"}
+      ]}
+    }
+  }
+}'
+```
+
+约束：
+- `refs` 只覆盖纯数据 `A11:D17`，**不要**把表头行 A1 并进来
+- `nameRef` 在 detached 模式下**必填**，缺了被校验报 `headerMode=detached requires ... nameRef`
+- `index` 按 refs 内的列序算（A=1、B=2、C=3、D=4），**不是**全表列号
+- `nameRef` 必须配对应的 `index`；单写 `nameRef` 不传 `index` 直接报参数错
+
+**多张图共享同一组表头（按维度拆图，必须用 detached）**：
+
+场景：销售明细表头在 A1:E1（月份/区域/销售额/订单数/客单价），数据按区域分 3 段（华北 A2:E9、华东 A10:E17、华南 A18:E25），要分别画 3 张图。
+
+❌ 常见错误：
+
+```jsonc
+// 错误 1：refs 含全局表头但跨段 —— 多个区域被混进同一张图
+{"data":{"refs":[{"value":"Sheet!A1:E17"}], ... }}   // 华东图混进华北 8 行
+// 错误 2：inline + refs 只取数据段、不写 detached/nameRef —— 图例显示成具体数据值
+{"data":{"refs":[{"value":"Sheet!A10:E17"}],"dim1":{"serie":{"index":1}}, ... }}
+```
+
+✅ 正确模式：3 张图各自 detached、refs 干净不重叠：
+
+```jsonc
+// 图 1：华北
+{"data":{
+  "headerMode":"detached","direction":"column",
+  "refs":[{"value":"Sheet!A2:E9"}],
+  "dim1":{"serie":{"index":1,"nameRef":"Sheet!A1"}},
+  "dim2":{"series":[
+    {"index":3,"nameRef":"Sheet!C1"},
+    {"index":4,"nameRef":"Sheet!D1"}
+  ]}
+}}
+// 图 2：华东 —— refs 改 Sheet!A10:E17，其余同上
+// 图 3：华南 —— refs 改 Sheet!A18:E25，其余同上
+```
+
+> `--properties` JSON 关键字段：
+> - `position.row` / `position.col` 必须留足空间，越界会被 API 拒（按本文件"图表位置选择"四步走）
+> - `snapshot.data.headerMode`：默认 inline；当 refs 仅覆盖数据子集而语义表头在子集之外，必须 `detached` + `nameRef`
 > - chart 引用 pivot 输出时，`snapshot.data.refs` 必须排除总计 / 小计行
 
 ### `+chart-update`
 
-> 更新前必须先 `+chart-list --chart-id <id>` 回读完整配置，再在其基础上修改，避免漏字段把图表回退到默认状态。
+**Update 三步法**（缺一步会丢字段）：
+
+1. `+chart-list --chart-id <id>` 拿到完整 snapshot
+2. 在拿到的 snapshot 上**局部**修改要改的字段，其余保持不变
+3. 把**完整 snapshot** 整个回写到 `--properties.snapshot`
+
+```bash
+lark-cli sheets +chart-update --url "..." --sheet-id "$SID" --chart-id "chrXXX" \
+  --properties '{
+    "position":{"row":0,"col":"A"},
+    "size":{"width":480,"height":320},
+    "snapshot": <完整快照（由 +chart-list 取回后局部修改）>
+  }'
+```
+
+> 关键：**不能只提交局部 snapshot**，否则未传字段会被还原为默认值。`+chart-update` 的语义是 PUT（整体覆盖），不是 PATCH。
 
 ### `+chart-delete`
 

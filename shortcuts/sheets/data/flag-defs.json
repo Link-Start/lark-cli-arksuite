@@ -1882,7 +1882,7 @@
         "kind": "own",
         "type": "string",
         "required": "xor",
-        "desc": "Options as a JSON array, e.g. `[\"opt1\",\"opt2\"]`; up to 500 items, each ≤100 chars, no commas",
+        "desc": "Options as a JSON array, e.g. `[\"opt1\",\"opt2\"]`. Server enforces no item-count cap and no per-item length cap; values containing commas are accepted (they are escape-encoded on the wire). For very large lists prefer `--source-range`.",
         "input": [
           "file",
           "stdin"
@@ -1918,7 +1918,7 @@
         "kind": "own",
         "type": "string",
         "required": "xor",
-        "desc": "Source range for listFromRange dropdown (A1 + sheet prefix, e.g. `Sheet1!T1:T3`); maps to server `data_validation.range` and auto-sets `data_validation.type='listFromRange'`. XOR with `--options`: pass `--options` for an inline list (type=list), pass this for a range reference (type=listFromRange). `--colors` length rule unchanged (≤ source range cell count); `--highlight` / `--multiple` behave the same."
+        "desc": "Source range for listFromRange dropdown (A1 + sheet prefix, e.g. `Sheet1!T1:T3`); maps to server `data_validation.range` and auto-sets `data_validation.type='listFromRange'`. XOR with `--options`: pass `--options` for an inline list (type=list), pass this for a range reference (type=listFromRange). `--colors` length rule unchanged (≤ source range cell count); `--highlight` / `--multiple` behave the same. When `--highlight` is on and the source covers more than 2000 cells, the server flags the dropdown as option-error (highlight + large source is an unsupported combo); CLI emits a stderr warning. Pass `--highlight=false` to suppress."
       },
       {
         "name": "dry-run",
@@ -2817,7 +2817,7 @@
         "kind": "own",
         "type": "string",
         "required": "xor",
-        "desc": "Options as a JSON array (e.g. `[\"opt1\",\"opt2\"]`)",
+        "desc": "Options as a JSON array, e.g. `[\"opt1\",\"opt2\"]`. Server enforces no item-count cap and no per-item length cap; values containing commas are accepted (they are escape-encoded on the wire). For very large lists prefer `--source-range`.",
         "input": [
           "file",
           "stdin"
@@ -2853,7 +2853,7 @@
         "kind": "own",
         "type": "string",
         "required": "xor",
-        "desc": "Source range for listFromRange dropdown (A1 + sheet prefix, e.g. `Sheet1!T1:T3`); maps to server `data_validation.range` and auto-sets `data_validation.type='listFromRange'`. XOR with `--options`: pass `--options` for an inline list (type=list), pass this for a range reference (type=listFromRange). `--colors` length rule unchanged (≤ source range cell count); `--highlight` / `--multiple` behave the same."
+        "desc": "Source range for listFromRange dropdown (A1 + sheet prefix, e.g. `Sheet1!T1:T3`); maps to server `data_validation.range` and auto-sets `data_validation.type='listFromRange'`. XOR with `--options`: pass `--options` for an inline list (type=list), pass this for a range reference (type=listFromRange). `--colors` length rule unchanged (≤ source range cell count); `--highlight` / `--multiple` behave the same. When `--highlight` is on and the source covers more than 2000 cells, the server flags the dropdown as option-error (highlight + large source is an unsupported combo); CLI emits a stderr warning. Pass `--highlight=false` to suppress."
       },
       {
         "name": "dry-run",

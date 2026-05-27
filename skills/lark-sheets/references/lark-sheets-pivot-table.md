@@ -62,7 +62,7 @@ _公共四件套 · 系统：`--dry-run`_
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `--properties` | string + File + Stdin（复合 JSON） | required | JSON：{"rows":[...],"columns":[...],"values":[...],"filters":[...],"show_row_grand_total":true,"show_col_grand_total":true}（数据源走 --source，不要再放进 properties.source） |
-| `--target-position` | string | optional | 透视表落点子表内的起始 cell（A1 格式，如 `A1`），与 `--target-sheet-id` 配套、映射到顶层 `target_position`，默认 `A1`（值为 A1 时不下发）。它与 `--range` 都表达落点但落在不同 wire 字段，避免两者同时给冲突值 |
+| `--target-position` | string | optional | 透视表落点子表内的起始 cell（A1 格式，如 `A1`），映射到顶层 `target_position`，默认 `A1`（值为 A1 时不下发）。它与 `--range` 都表达落点但落在不同 wire 字段，避免两者同时给冲突值 |
 | `--source` | string | required | 透视表源数据区域（A1 表示法，格式 `SheetName!StartCell:EndCell`，如 `Sheet1!A1:D100`） |
 | `--range` | string | optional | 透视表左上角放置位置（A1 单值，如 `F1`，仅 create 生效），映射到 `properties.range`；省略时放在落点子表（默认新建子表）的左上角。它与 `--target-position` 都表达落点但落在不同 wire 字段，避免两者同时给冲突值 |
 
@@ -108,7 +108,7 @@ _创建/更新的透视表属性_
 
 ## Examples
 
-公共四件套：所有 shortcut 顶部排列 `--url` / `--spreadsheet-token` / `--sheet-id` / `--sheet-name`（XOR）。`+pivot-create` 默认自动新建子表存放透视表产物（推荐）。
+公共四件套：所有 shortcut 顶部排列 `--url` / `--spreadsheet-token` / `--sheet-id` / `--sheet-name`。其中 `--sheet-id` / `--sheet-name` 在 `+pivot-update` / `+pivot-delete` / `+pivot-list` 上是公共四件套语义（定位透视表所在 sheet，XOR 必传一个）；但在 **`+pivot-create` 上是透视表的"落点"语义**——两个都不传时后端自动新建子表存放产物（强烈推荐，绝不碰源数据）。
 
 ### `+pivot-list`
 
@@ -120,26 +120,27 @@ lark-cli sheets +pivot-list --url "..." --sheet-id "$SID"
 
 > 数据源 `--source` 必须从表头行开始；空行 / 汇总行会被当作数据参与聚合，需提前用 `+csv-get` 确认起止边界。`--source` 和 `--range` 是独立 flag（不要再放 `--properties`）；`rows` / `columns` / `values` 等数组字段走 `--properties`。
 >
-> **先理清 `+pivot-create` 上 5 个位置类入参（语义不同，别混）**：
-> - 公共 `--sheet-id` / `--sheet-name`（**必填**，公共四件套）：定位**操作所在工作表**（数据源 sheet 的上下文）。
-> - `--source`（**必填**）：**源数据**区域，须自带 `Sheet!` 前缀（如 `Sheet1!A1:D100`）。
-> - `--target-sheet-id` / `--target-position` / `--range`：**产物落点**，按下面 3 种策略二选其一。
+> **先理清 `+pivot-create` 上 4 个位置类入参（语义不同，别混）**：
+> - `--source`（**必填**）：**源数据**区域，须自带 `Sheet!` 前缀（如 `Sheet1!A1:D100`）。源 sheet 的名字在 `--source` 字符串里，**不**通过单独 flag 传。
+> - `--sheet-id` / `--sheet-name`：**透视表的落点 sheet**（即产物放哪张子表）。两个互斥（最多传一个），都不传时后端自动新建子表存放产物（强烈推荐）。**注意：跟其它 shortcut 不同，这里 `--sheet-id` / `--sheet-name` 表达的不是"数据源所在 sheet"而是"产物落点 sheet"**。
+> - `--target-position`（可选，A1 表示法，默认 `A1`）：落点 sheet 内的起始 cell，映射到顶层 `target_position`。
+> - `--range`（可选，A1 单值，仅 create 生效）：跟 `--target-position` 表达同一意图但映射到 `properties.range`，**两者不要同时给**。
 >
 > **落点 3 种策略（互斥，选其一）**：
-> 1. **默认（强烈推荐）**：`--target-sheet-id` / `--target-position` / `--range` **都不传** → 服务端**自动新建子表**存放产物，绝不碰源数据。
-> 2. **放进指定的已有子表**：`--target-sheet-id <落点子表 id>`，可选 `--target-position <子表内起点 cell，默认 A1>`（这两个是**配套**使用，不是互斥）。
-> 3. **`--range`**：仅在不指定落点子表、想精确指定左上角 cell（映射到 `properties.range`）时用。⚠️ **`--range` 把产物落在公共 `--sheet-id` 指向的那张 sheet 上**——若 `--sheet-id` 就是源数据 sheet，产物会盖在源数据旁/上、**可能覆盖数据**。它与 `--target-position` 表达同一意图但落不同 wire 字段，**两者不要同时给**。
+> 1. **默认（强烈推荐）**：`--sheet-id` / `--sheet-name` / `--target-position` / `--range` **全都不传** → 服务端**自动新建子表**存放产物，绝不碰任何已有数据。
+> 2. **放进指定的已有子表**：传 `--sheet-id <落点子表 id>`（或 `--sheet-name`），可选 `--target-position <子表内起点 cell>`。⚠️ **若落点子表就是源数据所在的 sheet**，必须配 `--target-position` 或 `--range` 指向源数据范围**之外**的位置，否则产物默认从 A1 起会盖在源数据上。
+> 3. **`--range`**：跟策略 2 等价（同样需要 `--sheet-id` / `--sheet-name` 指定落点子表，不然落到自动新建子表），只是用 `properties.range` 那条 wire 路径表达位置。同样的覆盖风险，同样需要避开源数据范围。
 >
-> 一般用策略 1（默认新建子表）即可，无需 `--range`／`--target-*`。
+> 一般用策略 1（默认新建子表）即可，零覆盖风险，无需任何 `--sheet-*` / `--range` / `--target-*` flag。
 
 ```bash
-# 策略 1（推荐）：只给必填的公共 sheet 定位 + 源数据，不给落点 flag → 自动新建子表，零覆盖风险
-lark-cli sheets +pivot-create --url "..." --sheet-id "$SID" \
+# 策略 1（强烈推荐）：不传任何落点 flag → 后端自动新建子表，零覆盖风险
+lark-cli sheets +pivot-create --url "..." \
   --source "Sheet1!A1:D100" --properties @pivot.json
 
-# 策略 2：落进指定的已有目标子表（不会碰源数据）
-lark-cli sheets +pivot-create --url "..." --sheet-id "$SID" \
-  --source "Sheet1!A1:D100" --target-sheet-id "$DEST_SID" --target-position "A1" --properties @pivot.json
+# 策略 2：落进指定的已有目标子表（注意目标 sheet ≠ 源 sheet，否则要配 --target-position 避开源数据）
+lark-cli sheets +pivot-create --url "..." \
+  --source "Sheet1!A1:D100" --sheet-id "$DEST_SID" --target-position "A1" --properties @pivot.json
 ```
 
 ### `+pivot-update`
@@ -154,7 +155,7 @@ lark-cli sheets +pivot-delete --url "..." --sheet-id "$SID" --pivot-table-id "$P
 
 ### Validate / DryRun / Execute 约束
 
-- `Validate`：XOR 公共四件套；`+pivot-create` 的 `--source` 必填且必须含表头行；`--properties` 中 `rows` / `columns` / `values` 至少非空之一；`+pivot-delete` 强制 `--yes` 或 `--dry-run`。
+- `Validate`：`--url` / `--spreadsheet-token` XOR 必填；`+pivot-{update,delete,list}` 的 `--sheet-id` / `--sheet-name` XOR 必填一个，`+pivot-create` 例外（两个都可空，触发 backend auto-create 子表）；`+pivot-create` 的 `--source` 必填且必须含表头行；`--properties` 中 `rows` / `columns` / `values` 至少非空之一；`+pivot-delete` 强制 `--yes` 或 `--dry-run`。
 - `DryRun`：写操作输出"将要 POST/PATCH/DELETE 的 pivot 请求模板"+ 预估输出尺寸（行数 × 列数）。
 - `Execute`：写后不自动回读；如需确认，自行调用 `+pivot-list --pivot-table-id <id>` 并用 `+csv-get` 抽样读透视产物核对输出尺寸 + 总计行位置。
 

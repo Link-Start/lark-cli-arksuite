@@ -82,7 +82,8 @@ metadata:
    - **例外**：`+workbook-create` 是新建一个还不存在的表格，**不接受任何 spreadsheet / sheet 定位 flag**（只有 `--title` / `--folder-token` / `--headers` / `--values`）。
 2. **sheet 定位（公共四件套 shortcut 必填）**：`--sheet-id` 与 `--sheet-name` 二选一，**必须给其中之一**。两个都不给 → 校验报错 `specify at least one of --sheet-id or --sheet-name`。
    - ⚠️ **不确定 sheet 名时禁止直接猜 `Sheet1`**：除非用户对话明确说出 sheet 名 / id，或上下文（之前的工具调用 / URL 锚点 `?sheet=xxx`）已经出现过具体值，否则**第一步先调 `+workbook-info --url "..."`**（或 `--spreadsheet-token`）拿 `sheets[].sheet_id` / `sheets[].title` 列表再选。中文环境下子表常叫"数据" / "Sheet"（无数字）/ "工作表 1" / 业务名，猜 `Sheet1` 大概率撞 `sheet not found`，比先查多耗一次失败调用 + 重试。
-   - ⚠️ **`--range` 里的 `Sheet1!` 前缀不能替代 sheet 定位**：即使写了 `--range "'Sheet1'!A1:B2"`，仍**必须**额外传 `--sheet-id` 或 `--sheet-name`，否则照样报上面的错。
+   - ⚠️ **`--range` 里的 `Sheet1!` 前缀不能替代 sheet 定位**：即使写了 `--range 'Sheet1!A1:B2'`，仍**必须**额外传 `--sheet-id` 或 `--sheet-name`，否则照样报上面的错。
+   - ⚠️ **A1 reference 含 `!`**（`--source` / `--range` / `--ranges`）**：shell session 起手先 `set +H`** 关 bash history expansion，否则 `"Sheet1!A1"` 会被拦成 `event not found`；含特殊字符（`-` / 空格 / 非 ASCII）的 sheet 名还要内部 single-quote 包，如 `--source "'Sales-2025'!A1:D100"`。
    - **例外**：徽章标为 `_公共：URL/token（无 sheet 定位）…_` 的 shortcut（如 `+workbook-info` / `+workbook-export` / `+batch-update` / `+dropdown-get|update|delete` / `+cells-batch-set-style` / `+cells-batch-clear` / `+sheet-create`）**不接受也不需要** sheet 定位，只给一组 spreadsheet 定位即可。`+pivot-create` 用 `--target-sheet-id` / `--target-sheet-name`（XOR，可都不传，落点细节见 `lark-sheets-pivot-table`）。
 
 | Flag | Type | 必填 | 说明 |

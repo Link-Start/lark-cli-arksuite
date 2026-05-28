@@ -112,7 +112,7 @@ _创建/更新的透视表属性_
 
 公共四件套：所有 shortcut 顶部排列 `--url` / `--spreadsheet-token` / `--sheet-id` / `--sheet-name`，其中 `--sheet-id` / `--sheet-name` 在 `+pivot-update` / `+pivot-delete` / `+pivot-list` 上是公共四件套语义（定位透视表所在 sheet，XOR 必传一个）。
 
-**`+pivot-create` 例外**：placement 选择器改名为 `--target-sheet-id` / `--target-sheet-name`（不再叫 `--sheet-id` / `--sheet-name`），明示这是"产物落点 sheet"而非"数据源 sheet"。两个都不传时后端自动新建子表存放产物（强烈推荐，绝不碰源数据）。数据源 sheet 写在 `--source` 的 `'SheetName'!Range` 里，不靠任何 sheet 选择器 flag 表达。
+**`+pivot-create` 例外**：placement 选择器用 `--target-sheet-id` / `--target-sheet-name`（XOR，两个都不传时后端自动新建子表存放产物，强烈推荐，绝不碰源数据）。数据源 sheet 写在 `--source` 的 `'SheetName'!Range` 里，不靠 sheet 选择器 flag。
 
 ### `+pivot-list`
 
@@ -126,7 +126,7 @@ lark-cli sheets +pivot-list --url "..." --sheet-id "$SID"
 >
 > **先理清 `+pivot-create` 上 4 个位置类入参（语义不同，别混）**：
 > - `--source`（**必填**）：**源数据**区域，须自带 `Sheet!` 前缀（如 `'Sheet1'!A1:D100`，sheet 名按 A1 标准单引号包裹）。源 sheet 的名字在 `--source` 字符串里，**不**通过单独 flag 传。
-> - `--target-sheet-id` / `--target-sheet-name`：**透视表的落点 sheet**（即产物放哪张子表）。两个互斥（最多传一个），都不传时后端自动新建子表存放产物（强烈推荐）。**与其它 shortcut 的 `--sheet-id` / `--sheet-name` 区分**：那是"数据源 / 操作目标 sheet"，这里是"产物落点 sheet"——CLI 用不同 flag 名把这两类语义分开，避免误传。
+> - `--target-sheet-id` / `--target-sheet-name`：**透视表的落点 sheet**（即产物放哪张子表）。两个互斥（最多传一个），都不传时后端自动新建子表存放产物（强烈推荐）。
 > - `--target-position`（可选，A1 表示法，默认 `A1`）：落点 sheet 内的起始 cell，映射到顶层 `target_position`。
 > - `--range`（可选，A1 单值，仅 create 生效）：跟 `--target-position` 表达同一意图但映射到 `properties.range`，**两者不要同时给**。
 >

@@ -3107,20 +3107,6 @@
         "desc": "Spreadsheet token (XOR with `--url`)"
       },
       {
-        "name": "sheet-id",
-        "kind": "public",
-        "type": "string",
-        "required": "xor",
-        "desc": "Reference_id of the sub-sheet where the pivot table is located / will be created to (mutually exclusive with --sheet-name; takes priority when both given; when both omitted, a new sub-sheet is auto-created to host the pivot — recommended)"
-      },
-      {
-        "name": "sheet-name",
-        "kind": "public",
-        "type": "string",
-        "required": "xor",
-        "desc": "Name of the sub-sheet where the pivot table is located / will be created to (mutually exclusive with --sheet-id; when both omitted, a new sub-sheet is auto-created to host the pivot — recommended)"
-      },
-      {
         "name": "properties",
         "kind": "own",
         "type": "string",
@@ -3138,6 +3124,20 @@
         "required": "optional",
         "desc": "Top-left cell within the target sub-sheet (A1 notation, e.g. `A1`); maps to the top-level `target_position`, default `A1` (not sent when the value is A1). It and `--range` both express placement but map to different wire fields — avoid passing conflicting values for both.",
         "default": "A1"
+      },
+      {
+        "name": "target-sheet-id",
+        "kind": "own",
+        "type": "string",
+        "required": "xor",
+        "desc": "Reference_id of the target sub-sheet where the pivot table will be placed (mutually exclusive with `--target-sheet-name`; takes priority when both given; when both omitted, a new sub-sheet is auto-created to host the pivot — recommended). Distinct from the data-source sheet, which lives inside --source as a 'Sheet'-prefixed A1 reference like 'Sheet1'!A1:D100."
+      },
+      {
+        "name": "target-sheet-name",
+        "kind": "own",
+        "type": "string",
+        "required": "xor",
+        "desc": "Name of the target sub-sheet where the pivot table will be placed (mutually exclusive with `--target-sheet-id`; when both omitted, a new sub-sheet is auto-created to host the pivot — recommended). Distinct from the data-source sheet, which lives inside --source as a 'Sheet'-prefixed A1 reference like 'Sheet1'!A1:D100."
       },
       {
         "name": "source",

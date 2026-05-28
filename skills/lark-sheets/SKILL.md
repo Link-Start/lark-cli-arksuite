@@ -83,6 +83,7 @@ metadata:
 2. **sheet 定位（公共四件套 shortcut 必填）**：`--sheet-id` 与 `--sheet-name` 二选一，**必须给其中之一**。两个都不给 → 校验报错 `specify at least one of --sheet-id or --sheet-name`。
    - ⚠️ **`--range` 里的 `Sheet1!` 前缀不能替代 sheet 定位**：即使写了 `--range "'Sheet1'!A1:B2"`，仍**必须**额外传 `--sheet-id` 或 `--sheet-name`，否则照样报上面的错。
    - **例外**：徽章标为 `_公共：URL/token（无 sheet 定位）…_` 的 shortcut（如 `+workbook-info` / `+workbook-export` / `+batch-update` / `+dropdown-get|update|delete` / `+cells-batch-set-style` / `+cells-batch-clear` / `+sheet-create`）**不接受也不需要** sheet 定位，只给一组 spreadsheet 定位即可。
+   - **例外**：`+pivot-create` 的徽章虽然同样是「无 sheet 定位」，但它**有自己的 sheet 选择器** `--target-sheet-id` / `--target-sheet-name`（**不是** `--sheet-id` / `--sheet-name`）——这是**透视表落点 sheet**（产物放哪张子表），与"数据源 sheet"语义不同（数据源走 `--source` 的 `'SheetName'!Range`，没有独立 flag）。两个 target 都可不传 → 后端自动新建子表存放透视表（推荐）；两个都给则报 `--target-sheet-id and --target-sheet-name are mutually exclusive`。详见 `lark-sheets-pivot-table` 的 `+pivot-create` 段。
 
 | Flag | Type | 必填 | 说明 |
 | --- | --- | --- | --- |

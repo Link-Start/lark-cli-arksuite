@@ -33,6 +33,8 @@ metadata:
 
 ## Shortcuts
 
+**CRITICAL — 执行任何 Shortcut 之前，MUST 先用 Read 工具读取下表中对应的说明文档；没有文档链接的命令须执行 -h 了解用法。禁止盲调。**
+
 | Shortcut | 说明 |
 |---|---|
 | [`+query`](references/lark-whiteboard-query.md) | 查询画板，导出为预览图片、代码或原始节点结构 |

@@ -70,6 +70,8 @@ Item types for feed-layer flags:
 
 Shortcut 是对常用操作的高级封装（`lark-cli im +<verb> [flags]`）。有 Shortcut 的操作优先使用。
 
+**CRITICAL — 执行任何 Shortcut 之前，MUST 先用 Read 工具读取下表中对应的说明文档；没有文档链接的命令须执行 -h 了解用法。禁止盲调。**
+
 | Shortcut | 说明 |
 |----------|------|
 | [`+chat-create`](references/lark-im-chat-create.md) | Create a group chat or topic chat; user/bot; --chat-mode group|topic; private/public; invites users/bots; optionally sets bot manager |

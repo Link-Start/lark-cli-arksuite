@@ -179,6 +179,8 @@ lark-cli sheets +write --url "URL" --sheet-id "sheetId" --range "C6" \
 
 Shortcut 是对常用操作的高级封装（`lark-cli sheets +<verb> [flags]`）。有 Shortcut 的操作优先使用。
 
+**CRITICAL — 执行任何 Shortcut 之前，MUST 先用 Read 工具读取下表中对应的说明文档；没有文档链接的命令须执行 -h 了解用法。禁止盲调。**
+
 ### Spreadsheet Management
 
 对应参考文档：[spreadsheet-management](references/lark-sheets-spreadsheet-management.md)

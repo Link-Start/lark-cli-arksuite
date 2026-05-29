@@ -18,8 +18,10 @@ metadata:
 
 Shortcut 是对常用操作的高级封装（`lark-cli {{service}} +<verb> [flags]`）。有 Shortcut 的操作优先使用。
 
-| Shortcut | 说明 |
-|----------|------|
+**CRITICAL — 执行任何 Shortcut 之前，MUST 先用 Read 工具读取下表中对应的说明文档；没有文档链接的命令须执行 -h 了解用法。禁止盲调。**
+
+| Shortcut | 说明 | Reference |
+|----------|------|-----------|
 {{shortcut_rows}}
 {{/shortcuts}}
 {{#actions}}

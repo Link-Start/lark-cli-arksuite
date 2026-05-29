@@ -16,14 +16,17 @@ func TestParse(t *testing.T) {
 		{"en", LangEnUS, true},    // short code
 		{"en_us", LangEnUS, true}, // canonical locale
 		{"ja", LangJaJP, true},    // short code
-		{"pt", LangPtBR, true},    // pt → pt_br, not pt_pt
-		{"ms", LangMsMY, true},    // ms → ms_my
+		{"ja_jp", LangJaJP, true}, // canonical locale
 		{"", "", false},           // unset
 		{"ZH", "", false},         // case-sensitive
 		{"zh-CN", "", false},      // hyphen form not accepted
 		{"zh_CN", "", false},      // case-sensitive region
 		{"ar", "", false},         // not in the supported set
 		{"xx", "", false},         // unknown
+		{"ko", "", false},         // dropped in 2026-05-28 catalog shrink
+		{"ko_kr", "", false},      // dropped: legacy Feishu locale
+		{"fr_fr", "", false},      // dropped: legacy Feishu locale
+		{"de_de", "", false},      // dropped: legacy Feishu locale
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
@@ -81,8 +84,8 @@ func TestBase(t *testing.T) {
 
 func TestCodes(t *testing.T) {
 	codes := Codes()
-	if len(codes) != 14 {
-		t.Fatalf("len(Codes()) = %d, want 14", len(codes))
+	if len(codes) != 3 {
+		t.Fatalf("len(Codes()) = %d, want 3", len(codes))
 	}
 	if codes[0] != "zh_cn" {
 		t.Errorf("Codes()[0] = %q, want %q (catalog order)", codes[0], "zh_cn")

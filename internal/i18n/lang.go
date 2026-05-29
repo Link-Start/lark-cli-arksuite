@@ -10,17 +10,6 @@ const (
 	LangZhCN Lang = "zh_cn"
 	LangEnUS Lang = "en_us"
 	LangJaJP Lang = "ja_jp"
-	LangKoKR Lang = "ko_kr"
-	LangFrFR Lang = "fr_fr"
-	LangDeDE Lang = "de_de"
-	LangEsES Lang = "es_es"
-	LangItIT Lang = "it_it"
-	LangRuRU Lang = "ru_ru"
-	LangPtBR Lang = "pt_br"
-	LangThTH Lang = "th_th"
-	LangViVN Lang = "vi_vn"
-	LangIdID Lang = "id_id"
-	LangMsMY Lang = "ms_my"
 )
 
 type langEntry struct {
@@ -29,11 +18,13 @@ type langEntry struct {
 }
 
 // catalog is the single source of truth; order drives --help and error listing.
+// Locked to {zh, en, ja} as of 2026-05-28: TUI bundles only ship for zh/en
+// (ja falls back to the zh bundle), and Lark API client code only branches on
+// these three for localization. Adding more entries here is meaningful only
+// after the downstream codepaths (mail signature locale, TUI bundle) gain
+// branches for them.
 var catalog = []langEntry{
-	{LangZhCN, "zh"}, {LangEnUS, "en"}, {LangJaJP, "ja"}, {LangKoKR, "ko"},
-	{LangFrFR, "fr"}, {LangDeDE, "de"}, {LangEsES, "es"}, {LangItIT, "it"},
-	{LangRuRU, "ru"}, {LangPtBR, "pt"}, {LangThTH, "th"}, {LangViVN, "vi"},
-	{LangIdID, "id"}, {LangMsMY, "ms"},
+	{LangZhCN, "zh"}, {LangEnUS, "en"}, {LangJaJP, "ja"},
 }
 
 // find matches a short code or Feishu locale against the catalog (case-sensitive).

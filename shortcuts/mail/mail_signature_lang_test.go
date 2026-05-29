@@ -21,7 +21,7 @@ func TestResolveLang(t *testing.T) {
 		{"japanese", i18n.LangJaJP, "ja_jp"},
 		{"chinese", i18n.LangZhCN, "zh_cn"},
 		{"legacy short en", "en", "en_us"},
-		{"unsupported-by-mail falls back to zh_cn", i18n.LangFrFR, "zh_cn"},
+		{"legacy fr_fr falls back to zh_cn", i18n.Lang("fr_fr"), "zh_cn"},
 		{"unset falls back to zh_cn", "", "zh_cn"},
 	}
 	for _, tt := range tests {

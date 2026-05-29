@@ -3,7 +3,10 @@
 
 package i18n
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestParse(t *testing.T) {
 	tests := []struct {
@@ -84,11 +87,9 @@ func TestBase(t *testing.T) {
 
 func TestCodes(t *testing.T) {
 	codes := Codes()
-	if len(codes) != 3 {
-		t.Fatalf("len(Codes()) = %d, want 3", len(codes))
-	}
-	if codes[0] != "zh_cn" {
-		t.Errorf("Codes()[0] = %q, want %q (catalog order)", codes[0], "zh_cn")
+	want := []string{"zh_cn", "en_us", "ja_jp"}
+	if !slices.Equal(codes, want) {
+		t.Fatalf("Codes() = %v, want %v", codes, want)
 	}
 	// Every code must round-trip through Parse to itself (canonical).
 	for _, c := range codes {

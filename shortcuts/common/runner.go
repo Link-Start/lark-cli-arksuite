@@ -73,11 +73,20 @@ func (ctx *RuntimeContext) IsBot() bool {
 // UserOpenId returns the current user's open_id from config.
 func (ctx *RuntimeContext) UserOpenId() string { return ctx.Config.UserOpenId }
 
-// Lang returns the user's preference as a canonical locale, or "" if unset or
-// unrecognized; callers choose their own fallback.
+// Lang returns the user's preference as a canonical locale.
+// Empty stays empty (unset). Any non-empty stored value that does not resolve
+// via i18n.Parse (e.g. legacy ko_kr / fr_fr from before the catalog was
+// shrunk to zh/en/ja) is silently coerced to LangZhCN — existing configs
+// stay readable, just behave as zh.
 func (ctx *RuntimeContext) Lang() i18n.Lang {
-	lang, _ := i18n.Parse(string(ctx.Config.Lang))
-	return lang
+	raw := string(ctx.Config.Lang)
+	if raw == "" {
+		return ""
+	}
+	if lang, ok := i18n.Parse(raw); ok {
+		return lang
+	}
+	return i18n.LangZhCN
 }
 
 // BotInfo holds bot identity metadata fetched lazily from /bot/v3/info.

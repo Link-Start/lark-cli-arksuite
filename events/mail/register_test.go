@@ -80,7 +80,7 @@ func TestRegister_AuthTypesUserOnly(t *testing.T) {
 func TestRegister_RequiredScopes(t *testing.T) {
 	k := Keys()[0]
 	want := map[string]bool{
-		"mail:event":                                true,
+		"mail:event": true,
 		"mail:user_mailbox.event.mail_address:read": true,
 		"mail:user_mailbox:readonly":                true,
 		"mail:user_mailbox.message:readonly":        true,

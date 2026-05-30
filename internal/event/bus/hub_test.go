@@ -239,8 +239,8 @@ func newTestConn(eventKey string, eventTypes []string) *testConn {
 func (c *testConn) EventKey() string { return c.eventKey }
 
 // SubscriptionID falls back to EventKey for test mocks that don't set a separate subscription ID.
-func (c *testConn) SubscriptionID() string { return c.eventKey }
-func (c *testConn) EventTypes() []string   { return c.eventTypes }
+func (c *testConn) SubscriptionID() string   { return c.eventKey }
+func (c *testConn) EventTypes() []string     { return c.eventTypes }
 func (c *testConn) SendCh() chan interface{} { return c.sendCh }
 func (c *testConn) PID() int                 { return c.pid }
 func (c *testConn) IncrementReceived()       { c.received.Add(1) }

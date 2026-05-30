@@ -3,10 +3,13 @@
 
 package consume
 
-// NOTE: Run() requires bus daemon + transport infrastructure. Testing the full
-// Run path end-to-end is complex. For this task we test the parts:
-// (a) NormalizeParams error wrapping
-// (b) doHello correctly threads subscriptionID through to the Hello message.
+// NOTE: TestNormalizeParams_ErrorIsWrappedWithEventKey drives the real Run()
+// path — NormalizeParams fails before EnsureBus, so no bus/transport is
+// actually exercised, yet the assertion covers the production error-wrapping
+// code (not a reconstruction). TestDoHello_PassesSubscriptionIDToWire covers
+// the Hello wire encoding. The cleanup-error WARN format is verified
+// end-to-end by the sandbox E2E (TestEventConsume_Mail_ReadyAndTimeout),
+// which asserts the real stderr contract rather than a duplicated literal.
 
 import (
 	"bufio"
@@ -14,13 +17,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"strings"
 	"testing"
 
 	"github.com/larksuite/cli/internal/event"
 	"github.com/larksuite/cli/internal/event/protocol"
+	"github.com/larksuite/cli/internal/event/transport"
 )
 
 // fakeRT is a minimal event.APIClient mock.
@@ -33,24 +36,35 @@ func (f *fakeRT) CallAPI(_ context.Context, _, _ string, _ interface{}) (json.Ra
 }
 
 func TestNormalizeParams_ErrorIsWrappedWithEventKey(t *testing.T) {
-	// We test the error wrapping pattern in isolation: same call site Run uses.
-	keyDef := &event.KeyDefinition{
-		Key: "test.evt_normalize_fail",
+	// Drive the real Run() path. NormalizeParams failure returns before
+	// EnsureBus, so the bus/transport is never actually contacted, but the
+	// error-wrapping under test (`fmt.Errorf("normalize params for %s: %w")`)
+	// is the genuine production code path — if Run() ever stops wrapping, this
+	// test fails.
+	const key = "test.evt_normalize_fail"
+	event.RegisterKey(event.KeyDefinition{
+		Key:       key,
+		EventType: key,
+		Schema:    event.SchemaDef{Custom: &event.SchemaSpec{Raw: json.RawMessage(`{"type":"object"}`)}},
 		NormalizeParams: func(_ context.Context, _ event.APIClient, _ map[string]string) error {
 			return errors.New("simulated normalize failure")
 		},
-	}
-	err := keyDef.NormalizeParams(context.Background(), &fakeRT{}, map[string]string{})
+	})
+	defer event.UnregisterKeyForTest(key)
+
+	err := Run(context.Background(), transport.New(), "app", "", "", Options{
+		EventKey: key,
+		Runtime:  &fakeRT{},
+		Quiet:    true,
+	})
 	if err == nil {
-		t.Fatal("expected error from NormalizeParams")
+		t.Fatal("expected Run to fail when NormalizeParams errors")
 	}
-	// Run wraps with: fmt.Errorf("normalize params for %s: %w", EventKey, err)
-	wrapped := fmt.Errorf("normalize params for %s: %w", keyDef.Key, err)
-	if !strings.Contains(wrapped.Error(), "normalize params for test.evt_normalize_fail:") {
-		t.Errorf("wrap format wrong: %v", wrapped)
+	if !strings.Contains(err.Error(), "normalize params for "+key+":") {
+		t.Errorf("error not wrapped with EventKey prefix: %v", err)
 	}
-	if !strings.Contains(wrapped.Error(), "simulated normalize failure") {
-		t.Errorf("underlying error not propagated: %v", wrapped)
+	if !strings.Contains(err.Error(), "simulated normalize failure") {
+		t.Errorf("underlying error not propagated: %v", err)
 	}
 }
 
@@ -93,17 +107,5 @@ func TestDoHello_PassesSubscriptionIDToWire(t *testing.T) {
 	got := <-done
 	if got != "mail.x:alice" {
 		t.Errorf("Hello.SubscriptionID on wire = %q, want %q", got, "mail.x:alice")
-	}
-}
-
-func TestCleanupErrorBranching_Format(t *testing.T) {
-	// Unit-level check of the message format. We don't run full Run() — too
-	// much wiring. Instead we verify the format string is correct by checking
-	// the literal we expect in stderr matches what the spec mandates.
-	want := "WARN: cleanup failed: simulated unsubscribe failure (server-side subscribe is idempotent — residual record will be overwritten on next subscribe)"
-	got := fmt.Sprintf("WARN: cleanup failed: %v (server-side subscribe is idempotent — residual record will be overwritten on next subscribe)",
-		errors.New("simulated unsubscribe failure"))
-	if got != want {
-		t.Errorf("format mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }

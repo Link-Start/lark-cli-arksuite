@@ -143,14 +143,16 @@ func (c *Conn) ReaderLoop() {
 }
 
 func (c *Conn) handleControlMessage(msg interface{}) {
-	switch m := msg.(type) {
+	switch msg.(type) {
 	case *protocol.Bye:
 		c.shutdown()
 	case *protocol.PreShutdownCheck:
-		scope := m.SubscriptionID
-		if scope == "" {
-			scope = m.EventKey
-		}
+		// Use the connection's own authoritative subscription identity rather
+		// than recomputing from the incoming message: a stale or mismatched
+		// PreShutdownCheck must not ask about the wrong scope (which would
+		// suppress or mistrigger per-subscription cleanup). Conn.SubscriptionID()
+		// already falls back to EventKey when its stored subID is empty.
+		scope := c.SubscriptionID()
 		lastForKey := true
 		if c.checkLastForKey != nil {
 			lastForKey = c.checkLastForKey(scope)

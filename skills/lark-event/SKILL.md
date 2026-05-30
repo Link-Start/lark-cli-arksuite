@@ -159,7 +159,7 @@ When the consumer exits gracefully and is the last for its subscription scope, t
 - Success: `[event] cleanup done.`
 - Failure: `WARN: cleanup failed: <reason> (server-side subscribe is idempotent — residual record will be overwritten on next subscribe)`
 
-**Important**: do NOT manually call unsubscribe APIs as a recovery action. Subscriptions are reference-counted implicitly by Lark's server (one record per `(app, user, event_type)`), so a stray unsubscribe will silently affect other co-living consumers. The WARN is informational; the next consumer's subscribe call self-heals.
+**Important**: do NOT manually call unsubscribe APIs as a recovery action. Lark's server keeps a single idempotent record per `(app, user, event_type)` — subscribe overwrites it, and there is no reference counting — so a stray unsubscribe deletes that one record and silently cuts off every co-living consumer sharing it. The WARN is informational; the next consumer's subscribe call self-heals.
 
 ## Topic index
 

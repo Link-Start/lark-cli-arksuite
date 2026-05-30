@@ -257,16 +257,17 @@ func TestProcessAndOutput_Match_NilAcceptsAll(t *testing.T) {
 }
 
 func TestProcessAndOutput_Match_RunsBeforeProcess(t *testing.T) {
-	processCalls := 0
-	matchCalls := 0
+	// Record the actual call sequence — a bare call-count check would still
+	// pass if Process ran before Match.
+	var order []string
 	keyDef := &event.KeyDefinition{
 		Key: "test.evt",
 		Match: func(raw *event.RawEvent, params map[string]string) bool {
-			matchCalls++
+			order = append(order, "match")
 			return true
 		},
 		Process: func(ctx context.Context, rt event.APIClient, raw *event.RawEvent, params map[string]string) (json.RawMessage, error) {
-			processCalls++
+			order = append(order, "process")
 			return raw.Payload, nil
 		},
 	}
@@ -280,8 +281,8 @@ func TestProcessAndOutput_Match_RunsBeforeProcess(t *testing.T) {
 	if !wrote {
 		t.Error("expected wrote=true")
 	}
-	if matchCalls != 1 || processCalls != 1 {
-		t.Errorf("match=%d process=%d, want 1/1", matchCalls, processCalls)
+	if len(order) != 2 || order[0] != "match" || order[1] != "process" {
+		t.Errorf("call order = %v, want [match process]", order)
 	}
 }
 

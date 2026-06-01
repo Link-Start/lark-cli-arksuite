@@ -19,12 +19,13 @@
 
 | 读取目的 | 用这个 shortcut | 数据去向 | 说明 |
 |---------|----------------|---------|------|
-| 快速查看纯值数据、批量处理 | `+csv-get` | 对话上下文 | 返回 CSV 文本；大表请按 `--range` 行窗口分批读（单次返回量由 `--max-chars` 自动兜底，截断时看 `has_more`） |
+| 快速查看纯值数据、批量处理 | `+csv-get` | 对话上下文 | 返回 CSV 文本（加 `--rows-json` 改为结构化 rows `{row_number, values:{列字母→值}}`）；大表请按 `--range` 行窗口分批读（截断时看 `has_more`） |
 | 查看公式、样式、批注、数据验证 | `+cells-get` | 对话上下文 | 返回单元格完整信息，token 开销较大 |
 | 查看某区域的下拉框（数据验证）选项 | `+dropdown-get` | 对话上下文 | 返回该 A1 范围已配置的下拉列表选项 |
 
 **选择原则**：
 - 只看值或做数据处理 → `+csv-get`；大表分批读取，避免一次拉全表撑爆上下文
+- 要结构化、按 `row_number` / 列字母定位的输出 → `+csv-get --rows-json`（默认 CSV 串更省 token，超大表批量仍用默认）
 - 需要公式/样式/批注 → `+cells-get`
 - 只想知道某区域下拉框有哪些选项 → `+dropdown-get`
 
@@ -114,6 +115,7 @@ _公共四件套 · 系统：`--dry-run`_
 | `--max-chars` | int | optional | 防爆，默认 200000（隐藏 flag：不在 `--help` 列出，但可正常传入） |
 | `--include-row-prefix` | bool | optional | 是否在每行前加 `[row=N]` 前缀，默认 `true` |
 | `--skip-hidden` | bool | optional | 跳过隐藏行列，默认 `false` |
+| `--rows-json` | bool | optional | 返回结构化 rows（`{row_number, values:{列字母→值}}`）而非 CSV 文本，默认 `false` |
 
 ## Examples
 
@@ -137,6 +139,18 @@ lark-cli sheets +csv-get --spreadsheet-token shtXXX --sheet-name "销售明细" 
 - `col_indices` / `row_indices` — 列字母 / 行号映射数组
 - `current_region` — 自动扩展到非空连续区域的 A1 范围
 - `has_more` — 是否截断；截断后续读用 `--range` 接着读
+
+**加 `--rows-json`：返回结构化 rows（而非 CSV 字符串）**
+
+```bash
+lark-cli sheets +csv-get --url "https://example.feishu.cn/sheets/shtXXX" --sheet-name "Sheet1" --range "A1:G20" --rows-json
+```
+
+`--rows-json` 下的输出契约（替换 `annotated_csv` / `col_indices` / `row_indices`）：
+
+- `rows` — 数组，每元素 `{row_number, values}`。`row_number` 是真实表格行号（整数，下游需要行号的操作直接取它）；`values` 按**列字母** key（如 `values["D"]`，绝对列字母）。**所有逻辑行都在 `rows` 里**。引号内换行已解析进单元格值，无需自己按 RFC-4180 拆行。
+- `data_not_fully_read` — **仅当没读全时出现**：`{read_through_row, data_extends_through_row, unread_rows, reread_range}`。出现即表示真实数据超出本次读取范围；批量写入前必须按 `reread_range` 重读全区，否则漏行。
+- 其余字段（`current_region` / `actual_range` / `has_more`）同上。
 
 ### `+cells-get`
 

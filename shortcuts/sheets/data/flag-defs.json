@@ -1225,6 +1225,14 @@
         "desc": "Skip hidden rows and columns; default `false`"
       },
       {
+        "name": "rows-json",
+        "kind": "own",
+        "type": "bool",
+        "required": "optional",
+        "desc": "Return structured rows ({row_number, values:{col→cell}}) instead of CSV text; default false",
+        "default": "false"
+      },
+      {
         "name": "dry-run",
         "kind": "system",
         "type": "bool",

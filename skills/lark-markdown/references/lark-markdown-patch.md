@@ -63,8 +63,41 @@ lark-cli markdown +patch \
 - `--content` 必须显式传入，但允许为空字符串
 - 未加 `--regex` 时，行为等价于对整份 Markdown 文本执行 `strings.ReplaceAll`
 - 加了 `--regex` 时，行为等价于对整份 Markdown 文本执行 RE2 全量替换；`--content` 里的 `$1`、`${name}` 会按 Go regexp replacement template 解释，字面 `$` 请写成 `$$`
-- 替换后的最终 Markdown 不能为空；如果 patch 结果是空字符串，CLI 会直接报错，不会上传空文件
+- 替换后的最终 Markdown 不能为空；Drive 不支持 0 字节 Markdown，且空结果通常代表误清空，CLI 会直接报错，不会上传空文件
 - `0` 命中时命令仍然成功返回，但不会上传新版本
+
+## GOOD / BAD：正则转义
+
+`--pattern` 默认是字面量，不需要正则转义。只有传 `--regex` 时，`--pattern` 才按 Go RE2 正则解释。
+
+```bash
+# GOOD：默认字面量模式，括号和点号按普通文本匹配
+lark-cli markdown +patch \
+  --file-token boxcnxxxx \
+  --pattern 'TODO(v1.2)' \
+  --content 'DONE(v1.2)'
+
+# BAD：开启 --regex 后，未转义的 . 会匹配任意字符，括号会变成分组
+lark-cli markdown +patch \
+  --file-token boxcnxxxx \
+  --regex \
+  --pattern 'TODO(v1.2)' \
+  --content 'DONE'
+
+# GOOD：开启 --regex 后，按 RE2 规则转义字面括号和点号
+lark-cli markdown +patch \
+  --file-token boxcnxxxx \
+  --regex \
+  --pattern 'TODO\\(v1\\.2\\)' \
+  --content 'DONE'
+
+# GOOD：replacement 里需要字面 $ 时写成 $$
+lark-cli markdown +patch \
+  --file-token boxcnxxxx \
+  --regex \
+  --pattern 'price: (\\d+)' \
+  --content 'price: $$1'
+```
 
 ## 实现边界
 

@@ -33,9 +33,4 @@ lark-cli {{service}} <resource> <method> [flags] # 调用 API
 > **重要**：使用原生 API 时，必须先运行 `schema` 查看 `--data` / `--params` 参数结构，不要猜测字段格式。
 
 {{resource_sections}}
-## 权限表
-
-| 方法 | 所需 scope |
-|------|-----------|
-{{permission_rows}}
 {{/actions}}

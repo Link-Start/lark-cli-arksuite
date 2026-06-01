@@ -17,7 +17,7 @@ metadata:
 ## 关键规则速览
 
 - Wiki 链接里的 `/wiki/<token>` 不是底层文件 token；优先用 `drive +inspect` 解包，完整规则见 [`lark-wiki-token-routing.md`](../lark-shared/references/lark-wiki-token-routing.md)。
-- 本地文件导入为在线文档统一走 `drive +import`：Excel / CSV / `.base` -> `--type bitable`，Office / Markdown / HTML / TXT -> `--type docx`，PPTX -> `--type slides`。
+- 本地文件导入为在线文档统一走 `drive +import`：目标是 Base / 多维表格时用 `--type bitable`（`.xlsx` / `.csv` / `.base`，`.xls` 不支持）；目标是电子表格时用 `--type sheet`（`.xlsx` / `.xls` / `.csv`）；Office / Markdown / HTML / TXT -> `--type docx`，PPTX -> `--type slides`。
 - 原生 `.md` 文件内容读写、patch、diff 走 [`lark-markdown`](../lark-markdown/SKILL.md)；把 Markdown 转成在线 docx 才走 `drive +import --type docx`。
 - 评论默认只查未解决评论；review / 审阅场景优先局部评论。评论细节见 [`lark-drive-comments-guide.md`](references/lark-drive-comments-guide.md)。
 - 权限申请、安全标签、搜索等用户个人资源场景优先 `--as user`；bot 只能处理自己可见或已授权的资源。
@@ -25,7 +25,7 @@ metadata:
 ## 快速决策
 
 - 用户要**搜文档 / Wiki / 电子表格 / 多维表格 / 云空间对象**，优先使用 `lark-cli drive +search`。自然语言里"最近我编辑过的"、"我创建的"（`--mine`，owner 语义）、"最近一周我打开过的 xxx"、"某人 owner 的 docx" 等直接映射到扁平 flag。
-- 用户要把本地 `.xlsx` / `.csv` / `.base` 导入成 Base / 多维表格 / bitable，第一步必须使用 `lark-cli drive +import --type bitable`。
+- 用户要把本地 `.xlsx` / `.csv` / `.base` 导入成 Base / 多维表格 / bitable，第一步必须使用 `lark-cli drive +import --type bitable`；`.xls` 不能直接导入为 bitable，需先转 `.xlsx` 或改导入为 sheet。
 - 用户要把本地 `.md` / `.docx` / `.doc` / `.txt` / `.html` 导入成在线文档，使用 `lark-cli drive +import --type docx`。
 - 用户要把本地 `.xlsx` / `.xls` / `.csv` 导入成电子表格，使用 `lark-cli drive +import --type sheet`。
 - 用户要把本地 `.pptx` 导入成飞书幻灯片，使用 `lark-cli drive +import --type slides`；当前 PPTX 导入上限是 500MB。
@@ -82,6 +82,14 @@ Shortcut 是对常用操作的高级封装（`lark-cli drive +<verb> [flags]`）
 - Wiki URL（`/wiki/<token>`）必须先解析到底层 `obj_type` 和 `obj_token`，再决定后续调用哪个域。
 - `drive +inspect` 是跨类型 URL 检视的首选入口；当它输出 `type` 和 `token` 后，后续命令使用该 canonical token。
 - 原生 API 调用前先运行 `lark-cli schema drive.<resource>.<method>` 查看 `--params` / `--data` 结构；不要猜字段。
+
+## 原生 API 快速索引
+
+- 评论订阅事件：`drive user.subscription`、`drive user.subscription_status`、`drive user.remove_subscription`。
+- 公开权限设置：`drive permission.public get|patch`；错误码和处理建议见 [`lark-drive-permission-guide.md`](references/lark-drive-permission-guide.md)。
+- 协作者权限：`drive permission.members create|auth|transfer_owner`；授权当前应用访问文档见权限 guide，转移 owner 必须单独确认。
+- 元数据、统计、访问记录：`drive metas batch_query`、`drive file.statistics get`、`drive file.view_records list`。
+- 评论列表、解决状态、回复：`drive file.comments list|batch_query|patch`、`drive file.comment.replys *`；统计口径见评论 guide。
 
 ## 评论与权限
 

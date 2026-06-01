@@ -10,7 +10,7 @@
 - 如果 Wiki URL 解包后不是 `doc` / `docx` / `file` / `sheet` / `slides`，不要使用 `+add-comment`。
 - Drive 普通文件评论仅支持平台允许的文件类型，常见后缀包括 `.md`、`.txt`、`.json`、`.csv`、`.go`、`.js`、`.py`、`.pptx`、`.png`、`.jpg`、`.jpeg`、`.zip`、`.mp3`、`.mp4`；普通文件只支持全文评论。
 - `--content` 需要传 `reply_elements` JSON 数组字符串，例如 `--content '[{"type":"text","text":"正文"}]'`。
-- 如果直接调用原生评论 V2 API，先执行 `lark-cli schema drive.file.comments.create_v2`；全文评论省略 `anchor`，局部评论传 `anchor.block_id`。
+- 如果直接调用原生评论 V2 API，先执行 `lark-cli schema drive.file.comments.create_v2` 并优先参考 [`lark-drive-add-comment.md`](lark-drive-add-comment.md)。全文评论省略 `anchor`；doc/docx 局部评论传 `anchor.block_id`；sheet 评论使用 `anchor.block_id` + `sheet_col` + `sheet_row`；slides 评论使用 `anchor.block_id` + `slide_block_type`。
 
 ## Review 场景
 

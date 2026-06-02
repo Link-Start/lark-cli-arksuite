@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/extension/fileio"
 	"github.com/larksuite/cli/internal/auth"
 	"github.com/larksuite/cli/internal/output"
@@ -2331,15 +2332,15 @@ func validateSendTime(runtime *common.RuntimeContext) error {
 		return nil
 	}
 	if !runtime.Bool("confirm-send") {
-		return fmt.Errorf("--send-time requires --confirm-send to be set")
+		return output.ErrValidation("--send-time requires --confirm-send to be set")
 	}
 	ts, err := strconv.ParseInt(sendTime, 10, 64)
 	if err != nil {
-		return fmt.Errorf("--send-time must be a valid Unix timestamp in seconds, got %q", sendTime)
+		return output.ErrValidation("--send-time must be a valid Unix timestamp in seconds, got %q", sendTime)
 	}
 	minTime := time.Now().Unix() + 5*60
 	if ts < minTime {
-		return fmt.Errorf("--send-time must be at least 5 minutes in the future (minimum: %d, got: %d)", minTime, ts)
+		return output.ErrValidation("--send-time must be at least 5 minutes in the future (minimum: %d, got: %d)", minTime, ts)
 	}
 	return nil
 }
@@ -2364,9 +2365,11 @@ func validateConfirmSendScope(runtime *common.RuntimeContext) error {
 	}
 	required := []string{"mail:user_mailbox.message:send"}
 	if missing := auth.MissingScopes(stored.Scope, required); len(missing) > 0 {
-		return output.ErrWithHint(output.ExitAuth, "missing_scope",
-			fmt.Sprintf("--confirm-send requires scope: %s", strings.Join(missing, ", ")),
-			fmt.Sprintf("run `lark-cli auth login --scope \"%s\"` to grant the send permission", strings.Join(missing, " ")))
+		return errs.NewPermissionError(errs.SubtypeMissingScope,
+			"--confirm-send requires scope: %s", strings.Join(missing, ", ")).
+			WithHint("run `lark-cli auth login --scope %q` to grant the send permission", strings.Join(missing, " ")).
+			WithMissingScopes(missing...).
+			WithIdentity("user")
 	}
 	return nil
 }
@@ -2387,9 +2390,11 @@ func validateFolderReadScope(runtime *common.RuntimeContext) error {
 	}
 	required := []string{"mail:user_mailbox.folder:read"}
 	if missing := auth.MissingScopes(stored.Scope, required); len(missing) > 0 {
-		return output.ErrWithHint(output.ExitAuth, "missing_scope",
-			fmt.Sprintf("folder resolution requires scope: %s", strings.Join(missing, ", ")),
-			fmt.Sprintf("run `lark-cli auth login --scope \"%s\"` to grant folder read permission", strings.Join(missing, " ")))
+		return errs.NewPermissionError(errs.SubtypeMissingScope,
+			"folder resolution requires scope: %s", strings.Join(missing, ", ")).
+			WithHint("run `lark-cli auth login --scope %q` to grant folder read permission", strings.Join(missing, " ")).
+			WithMissingScopes(missing...).
+			WithIdentity("user")
 	}
 	return nil
 }
@@ -2410,9 +2415,11 @@ func validateLabelReadScope(runtime *common.RuntimeContext) error {
 	}
 	required := []string{"mail:user_mailbox.message:modify"}
 	if missing := auth.MissingScopes(stored.Scope, required); len(missing) > 0 {
-		return output.ErrWithHint(output.ExitAuth, "missing_scope",
-			fmt.Sprintf("label resolution requires scope: %s", strings.Join(missing, ", ")),
-			fmt.Sprintf("run `lark-cli auth login --scope \"%s\"` to grant label access permission", strings.Join(missing, " ")))
+		return errs.NewPermissionError(errs.SubtypeMissingScope,
+			"label resolution requires scope: %s", strings.Join(missing, ", ")).
+			WithHint("run `lark-cli auth login --scope %q` to grant label access permission", strings.Join(missing, " ")).
+			WithMissingScopes(missing...).
+			WithIdentity("user")
 	}
 	return nil
 }
@@ -2444,10 +2451,10 @@ func validateRecipientCount(to, cc, bcc string) error {
 func validateComposeInlineAndAttachments(fio fileio.FileIO, attachFlag, inlineFlag string, plainText bool, body string) error {
 	if strings.TrimSpace(inlineFlag) != "" {
 		if plainText {
-			return fmt.Errorf("--inline is not supported with --plain-text (inline images require HTML body)")
+			return output.ErrValidation("--inline is not supported with --plain-text (inline images require HTML body)")
 		}
 		if body != "" && !bodyIsHTML(body) {
-			return fmt.Errorf("--inline requires an HTML body (the provided body appears to be plain text; add HTML tags or remove --inline)")
+			return output.ErrValidation("--inline requires an HTML body (the provided body appears to be plain text; add HTML tags or remove --inline)")
 		}
 	}
 	inlineSpecs, err := parseInlineSpecs(inlineFlag)
@@ -2529,7 +2536,7 @@ func validateEventFlags(runtime *common.RuntimeContext) error {
 	hasAll := summary != "" && start != "" && end != ""
 
 	if hasAny && !hasAll {
-		return fmt.Errorf("--event-summary, --event-start, and --event-end must all be provided together")
+		return output.ErrValidation("--event-summary, --event-start, and --event-end must all be provided together")
 	}
 	if summary == "" {
 		return nil

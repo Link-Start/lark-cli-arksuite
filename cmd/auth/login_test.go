@@ -171,7 +171,7 @@ func TestCompleteDomain_CommaSeparated(t *testing.T) {
 }
 
 func TestAllKnownDomains(t *testing.T) {
-	domains := allKnownDomains()
+	domains := allKnownDomains("")
 	if len(domains) == 0 {
 		t.Fatal("expected non-empty known domains")
 	}
@@ -185,7 +185,7 @@ func TestAllKnownDomains(t *testing.T) {
 }
 
 func TestSortedKnownDomains(t *testing.T) {
-	sorted := sortedKnownDomains()
+	sorted := sortedKnownDomains("")
 	if len(sorted) == 0 {
 		t.Fatal("expected non-empty sorted domains")
 	}
@@ -195,7 +195,7 @@ func TestSortedKnownDomains(t *testing.T) {
 	}
 
 	// Should match allKnownDomains
-	known := allKnownDomains()
+	known := allKnownDomains("")
 	if len(sorted) != len(known) {
 		t.Errorf("sorted (%d) and known (%d) length mismatch", len(sorted), len(known))
 	}
@@ -220,7 +220,7 @@ func TestCollectScopesForDomains(t *testing.T) {
 		t.Skip("no from_meta data available")
 	}
 
-	scopes := collectScopesForDomains([]string{"calendar"}, "user")
+	scopes := collectScopesForDomains([]string{"calendar"}, "user", "")
 	if len(scopes) == 0 {
 		t.Fatal("expected non-empty scopes for calendar domain")
 	}
@@ -247,7 +247,7 @@ func TestCollectScopesForDomains(t *testing.T) {
 }
 
 func TestCollectScopesForDomains_NonexistentDomain(t *testing.T) {
-	scopes := collectScopesForDomains([]string{"nonexistent_domain_xyz"}, "user")
+	scopes := collectScopesForDomains([]string{"nonexistent_domain_xyz"}, "user", "")
 	if len(scopes) != 0 {
 		t.Errorf("expected empty scopes for nonexistent domain, got %d", len(scopes))
 	}
@@ -400,12 +400,11 @@ func TestHandleLoginScopeIssue_NonJSONAlignsWithLoginSuccess(t *testing.T) {
 			Granted:   []string{"base:app:copy"},
 		},
 	}, "ou_user", "tester")
-	var exitErr *output.ExitError
-	if !errors.As(err, &exitErr) {
-		t.Fatalf("expected ExitError, got %v", err)
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
-	if exitErr.Code != output.ExitAuth {
-		t.Fatalf("exit code = %d, want %d", exitErr.Code, output.ExitAuth)
+	if gotCode := output.ExitCodeOf(err); gotCode != output.ExitAuth {
+		t.Fatalf("exit code = %d, want %d", gotCode, output.ExitAuth)
 	}
 	got := stderr.String()
 	for _, want := range []string{
@@ -443,12 +442,11 @@ func TestHandleLoginScopeIssue_JSONAlignsWithLoginSuccess(t *testing.T) {
 			Granted:   []string{"base:app:copy"},
 		},
 	}, "ou_user", "tester")
-	var exitErr *output.ExitError
-	if !errors.As(err, &exitErr) {
-		t.Fatalf("expected ExitError, got %v", err)
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
-	if exitErr.Code != output.ExitAuth {
-		t.Fatalf("exit code = %d, want %d", exitErr.Code, output.ExitAuth)
+	if gotCode := output.ExitCodeOf(err); gotCode != output.ExitAuth {
+		t.Fatalf("exit code = %d, want %d", gotCode, output.ExitAuth)
 	}
 
 	var data map[string]interface{}
@@ -653,12 +651,11 @@ func TestAuthLoginRun_MissingRequestedScopeAlignsWithLoginSuccess(t *testing.T) 
 		Ctx:     context.Background(),
 		Scope:   "im:message:send",
 	})
-	var exitErr *output.ExitError
-	if !errors.As(err, &exitErr) {
-		t.Fatalf("expected ExitError, got %v", err)
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
-	if exitErr.Code != output.ExitAuth {
-		t.Fatalf("exit code = %d, want %d", exitErr.Code, output.ExitAuth)
+	if gotCode := output.ExitCodeOf(err); gotCode != output.ExitAuth {
+		t.Fatalf("exit code = %d, want %d", gotCode, output.ExitAuth)
 	}
 	got := stderr.String()
 	for _, want := range []string{
@@ -870,6 +867,90 @@ func TestAuthLoginRun_DeviceCodeTokenNilCleansScopeCache(t *testing.T) {
 	}
 }
 
+// TestAuthLoginRun_JSONAbort_StdoutEventOnly_StderrEmpty pins the
+// contract that when --json is set and pollDeviceToken returns OK=false,
+// stdout carries the structured authorization_failed event and stderr is
+// NOT polluted with a typed envelope. The returned error is a bare
+// ExitError with ExitAuth so the dispatcher only propagates the exit code
+// without emitting a second envelope on top of the JSON event.
+func TestAuthLoginRun_JSONAbort_StdoutEventOnly_StderrEmpty(t *testing.T) {
+	keyring.MockInit()
+	setupLoginConfigDir(t)
+
+	original := pollDeviceToken
+	t.Cleanup(func() { pollDeviceToken = original })
+	pollDeviceToken = func(ctx context.Context, httpClient *http.Client, appId, appSecret string, brand core.LarkBrand, deviceCode string, interval, expiresIn int, errOut io.Writer) *larkauth.DeviceFlowResult {
+		return &larkauth.DeviceFlowResult{OK: false, Message: "user denied"}
+	}
+
+	f, stdout, stderr, reg := cmdutil.TestFactory(t, &core.CliConfig{
+		ProfileName: "default",
+		AppID:       "cli_test",
+		AppSecret:   "secret",
+		Brand:       core.BrandFeishu,
+	})
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    larkauth.PathDeviceAuthorization,
+		Body: map[string]interface{}{
+			"device_code":               "device-code",
+			"user_code":                 "user-code",
+			"verification_uri":          "https://example.com/verify",
+			"verification_uri_complete": "https://example.com/verify?code=123",
+			"expires_in":                240,
+			"interval":                  0,
+		},
+	})
+
+	err := authLoginRun(&LoginOptions{
+		Factory: f,
+		Ctx:     context.Background(),
+		Scope:   "im:message:send",
+		JSON:    true,
+	})
+	if err == nil {
+		t.Fatal("expected error for aborted authorization")
+	}
+	if gotCode := output.ExitCodeOf(err); gotCode != output.ExitAuth {
+		t.Fatalf("exit code = %d, want %d", gotCode, output.ExitAuth)
+	}
+
+	// stdout: device_authorization event + authorization_failed event,
+	// the latter carrying the abort message as a structured field.
+	stdoutStr := stdout.String()
+	if !strings.Contains(stdoutStr, `"event":"authorization_failed"`) {
+		t.Errorf("stdout missing authorization_failed event, got: %s", stdoutStr)
+	}
+	if !strings.Contains(stdoutStr, "user denied") {
+		t.Errorf("stdout missing abort message, got: %s", stdoutStr)
+	}
+
+	// stderr must NOT carry a typed envelope: ErrBare propagates the exit
+	// code only, so the dispatcher emits nothing on stderr. The waiting-auth
+	// log line goes through the JSON-mode no-op `log` helper so it is also
+	// suppressed in JSON mode.
+	stderrStr := stderr.String()
+	if strings.Contains(stderrStr, `"type":"authentication"`) {
+		t.Errorf("stderr should not contain typed envelope, got: %s", stderrStr)
+	}
+	if strings.Contains(stderrStr, `"error"`) {
+		t.Errorf("stderr should not contain JSON envelope fields, got: %s", stderrStr)
+	}
+
+	// Returned error must be the bare *output.ExitError signal (no envelope).
+	var exitErr *output.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *output.ExitError, got %T: %v", err, err)
+	}
+	if exitErr.Code != output.ExitAuth {
+		t.Fatalf("ExitError.Code = %d, want %d", exitErr.Code, output.ExitAuth)
+	}
+	if exitErr.Detail != nil {
+		t.Errorf("ExitError.Detail should be nil for bare signal, got: %+v", exitErr.Detail)
+	}
+}
+
 func TestAuthLoginRun_JSONWriteFailure_NoWaitReturnsWriterError(t *testing.T) {
 	f, _, _, reg := cmdutil.TestFactory(t, &core.CliConfig{
 		ProfileName: "default",
@@ -945,17 +1026,27 @@ func TestAuthLoginRun_NoWaitJSONHintIncludesRawURLGuidance(t *testing.T) {
 	}
 	hint, _ := data["hint"].(string)
 	for _, want := range []string{
-		"exactly as returned by the CLI",
+		"MUST generate QR code AND display it",
+		"lark-cli auth qrcode",
+		"Prefer PNG QR code (--output)",
+		"use ASCII (--ascii) only when the user explicitly requests it",
+		"This is a required step, do NOT skip it",
+		"CRITICAL",
+		"You MUST include the QR image in your response",
+		"Generating the file alone is NOT enough",
+		"image tags, inline images, or file attachments",
+		"Display order",
+		"place the QR code image below the URL",
 		"opaque string",
-		"Do not URL-encode or decode it",
-		"do not add %20, spaces, or punctuation",
-		"do not wrap it as Markdown link text",
-		"fenced code block containing only the raw URL",
+		"cannot be modified",
 		"final message of the turn",
 		"return control to the user",
 		"do not block on --device-code in the same turn",
-		"After the user confirms authorization in a later step",
-		"lark-cli auth login --device-code device-code",
+		"come back and notify",
+		"YOU must execute",
+		"lark-cli auth login --device-code <device_code>",
+		"Do NOT cache",
+		"lark-cli auth login --no-wait --json",
 	} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("hint missing %q, got:\n%s", want, hint)
@@ -1054,12 +1145,17 @@ func TestAuthLoginRun_JSONDeviceAuthorizationAgentHintIncludesRawURLGuidance(t *
 		"结束本轮",
 		"用户回复已完成授权",
 		"不要在同一轮里展示 URL 后立刻阻塞执行 --device-code",
-		"逐字原样转发 CLI 返回的 URL",
+		"必须生成二维码并展示",
+		"lark-cli auth qrcode",
+		"优先生成 PNG 二维码（--output）",
+		"仅当用户明确要求时才使用 ASCII（--ascii）",
+		"生成后必须在回复中展示图片",
+		"仅生成文件不算完成",
+		"image 标签或内联图片",
+		"二维码图片置于 URL 下方完整展示",
+		"URL 输出规则",
 		"opaque string",
-		"不要做 URL 编码或解码",
-		"不要补 `%20`、空格或标点",
-		"不要改写成 Markdown 链接",
-		"只包含该 URL 的代码块单独输出",
+		"不要做任何修改",
 	} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("agent_hint missing %q, got:\n%s", want, hint)
@@ -1077,7 +1173,7 @@ func TestGetDomainMetadata_ExcludesEvent(t *testing.T) {
 }
 
 func TestAllKnownDomains_ExcludesAuthDomainChildren(t *testing.T) {
-	domains := allKnownDomains()
+	domains := allKnownDomains("")
 	if domains["whiteboard"] {
 		t.Error("whiteboard should not appear in known auth domains (it has auth_domain=docs)")
 	}
@@ -1087,7 +1183,7 @@ func TestAllKnownDomains_ExcludesAuthDomainChildren(t *testing.T) {
 }
 
 func TestCollectScopesForDomains_ExpandsAuthDomainChildren(t *testing.T) {
-	scopes := collectScopesForDomains([]string{"docs"}, "user")
+	scopes := collectScopesForDomains([]string{"docs"}, "user", "")
 	// docs domain should include whiteboard shortcut scopes (board:whiteboard:*)
 	found := false
 	for _, s := range scopes {

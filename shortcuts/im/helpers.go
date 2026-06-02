@@ -543,7 +543,17 @@ func findMP4Box(data []byte, start, end int, boxType string) (int, int) {
 			if offset+16 > end {
 				return -1, -1
 			}
-			boxEnd = int(binary.BigEndian.Uint64(data[offset+8:]))
+			// 64-bit "largesize" is the whole box length including its 16-byte
+			// header, so the box ends at offset+largesize (mirroring the
+			// offset+size used for 32-bit boxes below). Reject sizes that do not
+			// fit the search window; this also rejects values that would
+			// overflow int and drive boxEnd negative (CWE-190), which would
+			// otherwise index data out of range and panic.
+			largesize := binary.BigEndian.Uint64(data[offset+8:])
+			if largesize < 16 || largesize > uint64(end-offset) {
+				return -1, -1
+			}
+			boxEnd = offset + int(largesize)
 			dataStart = offset + 16
 		default:
 			if size < 8 {
@@ -688,7 +698,16 @@ func readMp4DurationBytes(data []byte) int64 {
 			if offset+16 > fileSize {
 				return 0
 			}
-			boxEnd = int64(binary.BigEndian.Uint64(data[offset+8 : offset+16]))
+			// 64-bit "largesize" is the whole box length including its 16-byte
+			// header, so the box ends at offset+largesize (mirroring offset+size
+			// for 32-bit boxes). Reject sizes that do not fit the file; this also
+			// rejects values that would overflow int64 and drive boxEnd negative
+			// (CWE-190), which would otherwise index data out of range and panic.
+			largesize := binary.BigEndian.Uint64(data[offset+8 : offset+16])
+			if largesize < 16 || largesize > uint64(fileSize-offset) {
+				return 0
+			}
+			boxEnd = offset + int64(largesize)
 			dataStart = offset + 16
 		case size < 8:
 			return 0
@@ -749,7 +768,16 @@ func readMp4Duration(f fileio.File, fileSize int64) int64 {
 			if _, err := f.ReadAt(hdr[8:16], offset+8); err != nil {
 				return 0
 			}
-			boxEnd = int64(binary.BigEndian.Uint64(hdr[8:16]))
+			// 64-bit "largesize" is the whole box length including its 16-byte
+			// header, so the box ends at offset+largesize (mirroring offset+size
+			// for 32-bit boxes). Reject sizes that do not fit the file; this also
+			// rejects values that would overflow int64 and drive boxEnd negative
+			// (CWE-190).
+			largesize := binary.BigEndian.Uint64(hdr[8:16])
+			if largesize < 16 || largesize > uint64(fileSize-offset) {
+				return 0
+			}
+			boxEnd = offset + int64(largesize)
 			dataStart = offset + 16
 		case size < 8:
 			return 0
@@ -911,12 +939,16 @@ func marshalMarkdownPostContent(content [][]map[string]interface{}) string {
 			"content": content,
 		},
 	}
-	return marshalJSONNoEscape(payload)
+	data, _ := json.Marshal(payload)
+	return string(data)
 }
 
 func buildSingleMDPost(markdown string) string {
 	return marshalMarkdownPostContent([][]map[string]interface{}{
-		buildPostElementNodes(optimizeMarkdownStyle(markdown)),
+		{{
+			"tag":  "md",
+			"text": optimizeMarkdownStyle(markdown),
+		}},
 	})
 }
 
@@ -940,7 +972,10 @@ func buildSegmentedPost(markdown string) string {
 		if optimized == "" {
 			continue
 		}
-		content = append(content, buildPostElementNodes(optimized))
+		content = append(content, []map[string]interface{}{{
+			"tag":  "md",
+			"text": optimized,
+		}})
 	}
 	if len(content) == 0 {
 		return buildSingleMDPost(markdown)
@@ -955,186 +990,8 @@ func buildMarkdownPostContent(markdown string) string {
 	return buildSingleMDPost(markdown)
 }
 
-// buildPostElementNodes splits optimized markdown text into Feishu post inline
-// elements. It tokenizes markdown links/images and bare http(s) URLs:
-//   - markdown links are kept verbatim inside a {"tag":"md"} segment
-//   - bare URLs become {"tag":"a"} elements rendered natively by Feishu,
-//     avoiding the md renderer misinterpreting underscores as italic markers
-//
-// Fenced code blocks are protected before tokenization so their content remains
-// a single md segment, and bare URLs support balanced parentheses in the path.
-func buildPostElementNodes(text string) []map[string]interface{} {
-	protected, codeBlocks := protectMarkdownCodeBlocks(text)
-	if protected == "" {
-		return []map[string]interface{}{{
-			"tag":  "md",
-			"text": text,
-		}}
-	}
-	elems := make([]map[string]interface{}, 0, 4)
-	prev := 0
-	for i := 0; i < len(protected); {
-		end, kind, ok := scanPostToken(protected, i)
-		if !ok {
-			i++
-			continue
-		}
-		if i > prev {
-			elems = appendMDPostNode(elems, restoreMarkdownCodeBlocks(protected[prev:i], codeBlocks))
-		}
-
-		token := protected[i:end]
-		if kind == postTokenMarkdown {
-			elems = appendMDPostNode(elems, restoreMarkdownCodeBlocks(token, codeBlocks))
-		} else {
-			url := trimBareURLToken(token)
-			if url == "" {
-				url = token
-			}
-			elems = append(elems, map[string]interface{}{
-				"tag":  "a",
-				"text": url,
-				"href": url,
-			})
-			elems = appendMDPostNode(elems, restoreMarkdownCodeBlocks(token[len(url):], codeBlocks))
-		}
-		prev = end
-		i = end
-	}
-	if prev < len(protected) {
-		elems = appendMDPostNode(elems, restoreMarkdownCodeBlocks(protected[prev:], codeBlocks))
-	}
-	if len(elems) == 0 {
-		return []map[string]interface{}{{
-			"tag":  "md",
-			"text": text,
-		}}
-	}
-	return elems
-}
-
-func trimBareURLToken(token string) string {
-	trimmed := strings.TrimRight(token, ".,;:!?")
-	for strings.HasSuffix(trimmed, ")") && strings.Count(trimmed, "(") < strings.Count(trimmed, ")") {
-		trimmed = strings.TrimSuffix(trimmed, ")")
-	}
-	return trimmed
-}
-
-type postTokenKind int
-
-const (
-	postTokenMarkdown postTokenKind = iota
-	postTokenURL
-)
-
-func appendMDPostNode(elems []map[string]interface{}, text string) []map[string]interface{} {
-	if text == "" {
-		return elems
-	}
-	return append(elems, map[string]interface{}{
-		"tag":  "md",
-		"text": text,
-	})
-}
-
-func scanPostToken(text string, start int) (end int, kind postTokenKind, ok bool) {
-	if end, ok = scanMarkdownLinkToken(text, start); ok {
-		return end, postTokenMarkdown, true
-	}
-	if end, ok = scanBareURLToken(text, start); ok {
-		return end, postTokenURL, true
-	}
-	return 0, 0, false
-}
-
-func scanMarkdownLinkToken(text string, start int) (int, bool) {
-	openBracket := start
-	if text[start] == '!' {
-		if start+1 >= len(text) || text[start+1] != '[' {
-			return 0, false
-		}
-		openBracket = start + 1
-	} else if text[start] != '[' {
-		return 0, false
-	}
-
-	closeBracket := strings.IndexByte(text[openBracket+1:], ']')
-	if closeBracket < 0 {
-		return 0, false
-	}
-	closeBracket += openBracket + 1
-	if closeBracket+1 >= len(text) || text[closeBracket+1] != '(' {
-		return 0, false
-	}
-	return scanBalancedParenToken(text, closeBracket+1)
-}
-
-func scanBareURLToken(text string, start int) (int, bool) {
-	if !strings.HasPrefix(text[start:], "http://") && !strings.HasPrefix(text[start:], "https://") {
-		return 0, false
-	}
-
-	depth := 0
-	for i := start; i < len(text); i++ {
-		switch text[i] {
-		case ' ', '\t', '\n', '\r', '<', '>', '"', '[', ']':
-			return i, i > start
-		case '(':
-			depth++
-		case ')':
-			if depth == 0 {
-				return i, i > start
-			}
-			depth--
-		}
-	}
-	return len(text), true
-}
-
-func scanBalancedParenToken(text string, openParen int) (int, bool) {
-	if openParen >= len(text) || text[openParen] != '(' {
-		return 0, false
-	}
-
-	depth := 0
-	for i := openParen; i < len(text); i++ {
-		switch text[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return i + 1, true
-			}
-		}
-	}
-	return 0, false
-}
-
-func buildPostElements(text string) string {
-	return marshalJSONNoEscape(buildPostElementNodes(text))
-}
-
-func marshalJSONNoEscape(v interface{}) string {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
-	return strings.TrimSuffix(buf.String(), "\n")
-}
-
-// marshalStringNoEscape serializes a string to JSON without HTML-escaping
-// special characters like &, <, >. Go's json.Marshal escapes them to \u0026
-// etc. by default, which breaks URLs containing & in Feishu's md renderer.
-func marshalStringNoEscape(s string) string {
-	return marshalJSONNoEscape(s)
-}
-
 // wrapMarkdownAsPost wraps markdown text into Feishu post format JSON (no network).
 // Used by DryRun. Output may include md/text paragraphs when blank-line separators are present.
-// Bare URLs are emitted as {"tag":"a"} elements to avoid Feishu's md renderer
-// misinterpreting underscores in URLs as italic markers.
 func wrapMarkdownAsPost(markdown string) string {
 	return buildMarkdownPostContent(markdown)
 }

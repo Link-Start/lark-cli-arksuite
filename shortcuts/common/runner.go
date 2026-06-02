@@ -19,12 +19,14 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/extension/fileio"
 	"github.com/larksuite/cli/internal/auth"
 	"github.com/larksuite/cli/internal/client"
 	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/internal/core"
 	"github.com/larksuite/cli/internal/credential"
+	"github.com/larksuite/cli/internal/i18n"
 	"github.com/larksuite/cli/internal/output"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -82,6 +84,13 @@ func (ctx *RuntimeContext) Command() string {
 
 // UserOpenId returns the current user's open_id from config.
 func (ctx *RuntimeContext) UserOpenId() string { return ctx.Config.UserOpenId }
+
+// Lang returns the user's preference as a canonical locale, or "" if unset or
+// unrecognized; callers choose their own fallback.
+func (ctx *RuntimeContext) Lang() i18n.Lang {
+	lang, _ := i18n.Parse(string(ctx.Config.Lang))
+	return lang
+}
 
 // BotInfo holds bot identity metadata fetched lazily from /bot/v3/info.
 type BotInfo struct {
@@ -696,24 +705,31 @@ func checkScopePrereqs(f *cmdutil.Factory, ctx context.Context, appID string, id
 
 // enhancePermissionError enriches a permission / auth error with the
 // shortcut's declared required scopes so the user knows exactly what to do.
+//
+// Detection is typed: an error qualifies when it (or any error in its
+// Unwrap chain) is *errs.PermissionError, or — for legacy bridge paths —
+// when it is an *output.ExitError carrying Detail.Type "permission" or
+// "missing_scope". The previous implementation scanned the upstream
+// message text for keywords like "permission" / "scope" / "unauthorized",
+// which was brittle to canonical-message rewrites; routing on the typed
+// shape decouples this helper from the wording.
 func enhancePermissionError(err error, requiredScopes []string) error {
+	var permErr *errs.PermissionError
+	if errors.As(err, &permErr) {
+		scopeDisplay := strings.Join(requiredScopes, ", ")
+		scopeArg := strings.Join(requiredScopes, " ")
+		hint := fmt.Sprintf(
+			"this command requires scope(s): %s\nrun `lark-cli auth login --scope \"%s\"` in the background. It blocks and outputs a verification URL — retrieve the URL and open it in a browser to complete login.",
+			scopeDisplay, scopeArg)
+		permErr.Hint = hint
+		return err
+	}
+
 	var exitErr *output.ExitError
 	if !errors.As(err, &exitErr) || exitErr.Detail == nil {
 		return err
 	}
-
-	// Detect permission-related errors by type or message keywords.
-	isPermErr := exitErr.Detail.Type == "permission" || exitErr.Detail.Type == "missing_scope"
-	if !isPermErr {
-		lower := strings.ToLower(exitErr.Detail.Message)
-		for _, kw := range []string{"permission", "scope", "authorization", "unauthorized"} {
-			if strings.Contains(lower, kw) {
-				isPermErr = true
-				break
-			}
-		}
-	}
-	if !isPermErr {
+	if exitErr.Detail.Type != "permission" && exitErr.Detail.Type != "missing_scope" {
 		return err
 	}
 
@@ -879,9 +895,11 @@ func checkShortcutScopes(f *cmdutil.Factory, ctx context.Context, as core.Identi
 	if len(missing) == 0 {
 		return nil
 	}
-	return output.ErrWithHint(output.ExitAuth, "missing_scope",
-		fmt.Sprintf("missing required scope(s): %s", strings.Join(missing, ", ")),
-		fmt.Sprintf("run `lark-cli auth login --scope \"%s\"` in the background. It blocks and outputs a verification URL — retrieve the URL and open it in a browser to complete login.", strings.Join(missing, " ")))
+	return errs.NewPermissionError(errs.SubtypeMissingScope,
+		"missing required scope(s): %s", strings.Join(missing, ", ")).
+		WithIdentity(string(as)).
+		WithMissingScopes(missing...).
+		WithHint("run `lark-cli auth login --scope \"%s\"` in the background. It blocks and outputs a verification URL — retrieve the URL and open it in a browser to complete login.", strings.Join(missing, " "))
 }
 
 func newRuntimeContext(cmd *cobra.Command, f *cmdutil.Factory, s *Shortcut, config *core.CliConfig, as core.Identity, botOnly bool) (*RuntimeContext, error) {

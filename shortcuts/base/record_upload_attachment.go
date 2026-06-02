@@ -20,6 +20,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/extension/fileio"
 	"github.com/larksuite/cli/internal/output"
 	"github.com/larksuite/cli/internal/util"
@@ -787,7 +788,7 @@ func downloadBaseAttachment(ctx context.Context, runtime *common.RuntimeContext,
 		QueryParams: query,
 	})
 	if err != nil {
-		return nil, output.ErrNetwork("download failed: %v", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -833,6 +834,15 @@ func attachmentDownloadFailure(target baseAttachmentDownloadTarget, err error) m
 
 func attachmentDownloadProgressError(err error, downloaded []map[string]interface{}, failed []map[string]interface{}) error {
 	msg := fmt.Sprintf("download failed after %d attachment(s) succeeded and %d failed: %v", len(downloaded), len(failed), err)
+	detail := map[string]interface{}{
+		"downloaded": downloaded,
+		"failed":     failed,
+	}
+	if logID := baseAttachmentDownloadLogID(err); logID != "" {
+		detail["log_id"] = logID
+	}
+	const hint = "Some files may already have been saved. Inspect error.detail.downloaded before retrying, or rerun with --overwrite if the failed target now exists."
+
 	var exitErr *output.ExitError
 	if errors.As(err, &exitErr) && exitErr.Detail != nil {
 		return &output.ExitError{
@@ -841,11 +851,22 @@ func attachmentDownloadProgressError(err error, downloaded []map[string]interfac
 				Type:    exitErr.Detail.Type,
 				Code:    exitErr.Detail.Code,
 				Message: msg,
-				Hint:    "Some files may already have been saved. Inspect error.detail.downloaded before retrying, or rerun with --overwrite if the failed target now exists.",
-				Detail: map[string]interface{}{
-					"downloaded": downloaded,
-					"failed":     failed,
-				},
+				Hint:    hint,
+				Detail:  detail,
+			},
+			Err: err,
+		}
+	}
+	var netErr *errs.NetworkError
+	if errors.As(err, &netErr) {
+		return &output.ExitError{
+			Code: output.ExitNetwork,
+			Detail: &output.ErrDetail{
+				Type:    "network",
+				Code:    netErr.Code,
+				Message: msg,
+				Hint:    hint,
+				Detail:  detail,
 			},
 			Err: err,
 		}
@@ -855,14 +876,29 @@ func attachmentDownloadProgressError(err error, downloaded []map[string]interfac
 		Detail: &output.ErrDetail{
 			Type:    "io",
 			Message: msg,
-			Hint:    "Some files may already have been saved. Inspect error.detail.downloaded before retrying, or rerun with --overwrite if the failed target now exists.",
-			Detail: map[string]interface{}{
-				"downloaded": downloaded,
-				"failed":     failed,
-			},
+			Hint:    hint,
+			Detail:  detail,
 		},
 		Err: err,
 	}
+}
+
+func baseAttachmentDownloadLogID(err error) string {
+	var netErr *errs.NetworkError
+	if errors.As(err, &netErr) {
+		if id := strings.TrimSpace(netErr.LogID); id != "" {
+			return id
+		}
+	}
+	var exitErr *output.ExitError
+	if errors.As(err, &exitErr) && exitErr.Detail != nil {
+		if detail, ok := exitErr.Detail.Detail.(map[string]interface{}); ok {
+			if logID, _ := detail["log_id"].(string); logID != "" {
+				return strings.TrimSpace(logID)
+			}
+		}
+	}
+	return ""
 }
 
 func outputPathLooksDirectory(runtime *common.RuntimeContext, outputPath string) bool {

@@ -70,7 +70,7 @@
             },
             "input": {
               "type": "object",
-              "description": "该 shortcut 的入参集（不含 spreadsheet 定位）；基础 flag 跑 `lark-cli sheets <shortcut> --help`，复合 JSON flag 跑 `--print-schema --flag-name <flag>`。不要手填 `operation`（动作由 shortcut 名表达）。"
+              "description": "该 shortcut 的入参集——含子表定位 sheet_id（或 sheet_name），但不含 spreadsheet token/url（后者只在顶层 --url/--spreadsheet-token 给一次；+batch-update 顶层没有 --sheet-id）；input 的键是该 shortcut 的 flag 展平成 JSON、不是再套一层嵌套。基础 flag 跑 `lark-cli sheets <shortcut> --help`，复合 JSON flag 跑 `--print-schema --flag-name <flag>`。不要手填 `operation`（动作由 shortcut 名表达）。"
             }
           }
         }

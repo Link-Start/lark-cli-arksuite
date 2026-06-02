@@ -341,7 +341,7 @@ func TestValidateAgainstSchema_EnumErrorEnhancements(t *testing.T) {
 // case-insensitive enum tolerance fires against the real embedded schema for
 // the most common real-world miscue — pivot summarize_by upper-cased. "SUM" is
 // rewritten to "sum" in place and the input passes; previously this surfaced a
-// did-you-mean error, but P0-4 canonicalizes it so the agent's first try wins.
+// did-you-mean error, but in-place canonicalization fixes it so the agent's first try wins.
 func TestValidateInputAgainstSchema_RealEnumCaseNormalized(t *testing.T) {
 	t.Parallel()
 	fv := mapFlagView{command: "+pivot-create"}

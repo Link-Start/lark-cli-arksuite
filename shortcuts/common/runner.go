@@ -906,6 +906,16 @@ func newRuntimeContext(cmd *cobra.Command, f *cmdutil.Factory, s *Shortcut, conf
 	return rctx, nil
 }
 
+// stripUTF8BOM removes a leading UTF-8 byte-order mark from content read from a
+// file or stdin. A BOM that survives into a CSV cell corrupts the first value
+// (e.g. "\ufeffNorth", which then makes a MAXIFS/lookup miss it), and a BOM at the
+// head of a JSON payload makes json.Unmarshal fail with "invalid character 'ï'".
+// Some editors and exporters add it silently. Only a leading BOM is removed; interior
+// occurrences are left untouched.
+func stripUTF8BOM(s string) string {
+	return strings.TrimPrefix(s, "\uFEFF")
+}
+
 // resolveInputFlags resolves @file and - (stdin) for flags with Input sources.
 // Must be called before Validate/DryRun/Execute so that runtime.Str() returns resolved content.
 func resolveInputFlags(rctx *RuntimeContext, flags []Flag) error {
@@ -935,7 +945,9 @@ func resolveInputFlags(rctx *RuntimeContext, flags []Flag) error {
 			if err != nil {
 				return FlagErrorf("--%s: failed to read from stdin: %v", fl.Name, err)
 			}
-			rctx.Cmd.Flags().Set(fl.Name, string(data))
+			// strip a leading UTF-8 BOM so it can't corrupt the first CSV
+			// cell or break JSON parsing downstream.
+			rctx.Cmd.Flags().Set(fl.Name, stripUTF8BOM(string(data)))
 			continue
 		}
 
@@ -958,7 +970,9 @@ func resolveInputFlags(rctx *RuntimeContext, flags []Flag) error {
 			if err != nil {
 				return FlagErrorf("--%s: %v", fl.Name, err)
 			}
-			rctx.Cmd.Flags().Set(fl.Name, string(data))
+			// strip a leading UTF-8 BOM so it
+			// can't corrupt the first CSV cell or break JSON parsing downstream.
+			rctx.Cmd.Flags().Set(fl.Name, stripUTF8BOM(string(data)))
 			continue
 		}
 	}

@@ -618,6 +618,27 @@ func boom() error {
 	}
 }
 
+func TestCheckNoLegacyEnvelopeLiteral_RejectsExitErrorLiteralOnTaskPath(t *testing.T) {
+	src := `package task
+
+import "github.com/larksuite/cli/internal/output"
+
+func boom() error {
+	return &output.ExitError{Code: 1}
+}
+`
+	v := CheckNoLegacyEnvelopeLiteral("shortcuts/task/task_update.go", src)
+	if len(v) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %+v", len(v), v)
+	}
+	if v[0].Action != ActionReject {
+		t.Errorf("action = %q, want REJECT", v[0].Action)
+	}
+	if !strings.Contains(v[0].Message, "ExitError") {
+		t.Errorf("message should name the legacy type: %s", v[0].Message)
+	}
+}
+
 func TestCheckNoLegacyEnvelopeLiteral_RejectsErrDetailLiteralOnDrivePath(t *testing.T) {
 	src := `package drive
 
@@ -790,6 +811,26 @@ func boom(runtime *common.RuntimeContext) error {
 }
 `
 	v := CheckNoLegacyRuntimeAPICall("shortcuts/drive/drive_create_folder.go", src)
+	if len(v) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %+v", len(v), v)
+	}
+	if v[0].Action != ActionReject {
+		t.Errorf("action = %q, want REJECT", v[0].Action)
+	}
+	if !strings.Contains(v[0].Message, "CallAPI") {
+		t.Errorf("message should name the legacy method: %s", v[0].Message)
+	}
+}
+
+func TestCheckNoLegacyRuntimeAPICall_RejectsCallAPIOnTaskPath(t *testing.T) {
+	src := `package task
+
+func boom(runtime *common.RuntimeContext) error {
+	_, err := runtime.CallAPI("POST", "/x", nil, nil)
+	return err
+}
+`
+	v := CheckNoLegacyRuntimeAPICall("shortcuts/task/task_update.go", src)
 	if len(v) != 1 {
 		t.Fatalf("expected 1 violation, got %d: %+v", len(v), v)
 	}

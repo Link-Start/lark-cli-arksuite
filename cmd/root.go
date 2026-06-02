@@ -18,6 +18,7 @@ import (
 	"github.com/larksuite/cli/internal/cmdpolicy"
 	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/internal/core"
+	"github.com/larksuite/cli/internal/deprecation"
 	"github.com/larksuite/cli/internal/errclass"
 	"github.com/larksuite/cli/internal/errcompat"
 	"github.com/larksuite/cli/internal/hook"
@@ -149,29 +150,46 @@ func setupNotices() {
 	skillscheck.Init(build.Version)
 
 	// Composed notice provider — emits keys only when each pending is set.
-	output.PendingNotice = func() map[string]interface{} {
-		notice := map[string]interface{}{}
-		if info := update.GetPending(); info != nil {
-			notice["update"] = map[string]interface{}{
-				"current": info.Current,
-				"latest":  info.Latest,
-				"message": info.Message(),
-				"command": "lark-cli update",
-			}
+	output.PendingNotice = composePendingNotice
+}
+
+// composePendingNotice merges all process-level pending notices (available
+// update, skills/binary drift, deprecated-command alias) into the map surfaced
+// as the JSON "_notice" envelope field. Returns nil when nothing is pending.
+// Extracted from Execute so the composition is unit-testable.
+func composePendingNotice() map[string]interface{} {
+	notice := map[string]interface{}{}
+	if info := update.GetPending(); info != nil {
+		notice["update"] = map[string]interface{}{
+			"current": info.Current,
+			"latest":  info.Latest,
+			"message": info.Message(),
+			"command": "lark-cli update",
 		}
-		if stale := skillscheck.GetPending(); stale != nil {
-			notice["skills"] = map[string]interface{}{
-				"current": stale.Current,
-				"target":  stale.Target,
-				"message": stale.Message(),
-				"command": "lark-cli update",
-			}
-		}
-		if len(notice) == 0 {
-			return nil
-		}
-		return notice
 	}
+	if stale := skillscheck.GetPending(); stale != nil {
+		notice["skills"] = map[string]interface{}{
+			"current": stale.Current,
+			"target":  stale.Target,
+			"message": stale.Message(),
+			"command": "lark-cli update",
+		}
+	}
+	if dep := deprecation.GetPending(); dep != nil {
+		entry := map[string]interface{}{
+			"command": dep.Command,
+			"message": dep.Message(),
+			"action":  "lark-cli update",
+		}
+		if dep.Replacement != "" {
+			entry["replacement"] = dep.Replacement
+		}
+		notice["deprecated_command"] = entry
+	}
+	if len(notice) == 0 {
+		return nil
+	}
+	return notice
 }
 
 // isCompletionCommand returns true if args indicate a shell completion request.
@@ -338,13 +356,28 @@ func unknownSubcommandRunE(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 	unknown := args[0]
-	available := availableSubcommandNames(cmd)
-	suggestions := suggest.Closest(unknown, available, 6)
+	available, deprecated := availableSubcommandNames(cmd)
+	// Rank suggestions across both current and deprecated names so a mistyped
+	// legacy command (e.g. +raed → +read) still resolves; the alias stays
+	// runnable and self-flags via the _notice on execution.
+	suggestions := suggest.Closest(unknown, append(append([]string{}, available...), deprecated...), 6)
 	msg := fmt.Sprintf("unknown subcommand %q for %q", unknown, cmd.CommandPath())
 	hint := fmt.Sprintf("run `%s --help` to see available subcommands", cmd.CommandPath())
 	if len(suggestions) > 0 {
 		hint = fmt.Sprintf("did you mean one of: %s? (run `%s --help` for the full list)",
 			strings.Join(suggestions, ", "), cmd.CommandPath())
+	}
+	detail := map[string]any{
+		"unknown":      unknown,
+		"command_path": cmd.CommandPath(),
+		"suggestions":  suggestions,
+		"available":    available,
+	}
+	// Only services with backward-compat aliases (currently sheets) carry a
+	// deprecated bucket; omit the key elsewhere so every other service's
+	// envelope is unchanged.
+	if len(deprecated) > 0 {
+		detail["deprecated"] = deprecated
 	}
 	return &output.ExitError{
 		Code: output.ExitValidation,
@@ -352,18 +385,16 @@ func unknownSubcommandRunE(cmd *cobra.Command, args []string) error {
 			Type:    "unknown_subcommand",
 			Message: msg,
 			Hint:    hint,
-			Detail: map[string]any{
-				"unknown":      unknown,
-				"command_path": cmd.CommandPath(),
-				"suggestions":  suggestions,
-				"available":    available,
-			},
+			Detail:  detail,
 		},
 	}
 }
 
-func availableSubcommandNames(cmd *cobra.Command) []string {
-	subs := make([]string, 0, len(cmd.Commands()))
+// availableSubcommandNames returns the invokable subcommand names of cmd, split
+// into current commands and backward-compatibility aliases (those tagged into
+// the deprecated cobra group via cmdutil.DeprecatedGroupID). Both slices are
+// sorted; hidden commands plus help/completion are omitted.
+func availableSubcommandNames(cmd *cobra.Command) (available, deprecated []string) {
 	for _, c := range cmd.Commands() {
 		if c.Hidden || !c.IsAvailableCommand() {
 			continue
@@ -372,10 +403,15 @@ func availableSubcommandNames(cmd *cobra.Command) []string {
 		if name == "help" || name == "completion" {
 			continue
 		}
-		subs = append(subs, name)
+		if cmdutil.IsDeprecatedCommand(c) {
+			deprecated = append(deprecated, name)
+		} else {
+			available = append(available, name)
+		}
 	}
-	sort.Strings(subs)
-	return subs
+	sort.Strings(available)
+	sort.Strings(deprecated)
+	return available, deprecated
 }
 
 // flagDidYouMean is the root FlagErrorFunc (inherited by all subcommands). It

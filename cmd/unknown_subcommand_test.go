@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/internal/output"
 )
 
@@ -164,7 +165,7 @@ func TestAvailableSubcommandNames_FiltersHelpAndCompletion(t *testing.T) {
 		&cobra.Command{Use: "gamma", RunE: func(*cobra.Command, []string) error { return nil }},
 	)
 
-	got := availableSubcommandNames(root)
+	got, _ := availableSubcommandNames(root)
 	want := []string{"alpha", "gamma"}
 	if len(got) != len(want) {
 		t.Fatalf("expected %v, got %v", want, got)
@@ -173,5 +174,63 @@ func TestAvailableSubcommandNames_FiltersHelpAndCompletion(t *testing.T) {
 		if got[i] != name {
 			t.Errorf("availableSubcommandNames[%d] = %q, want %q", i, got[i], name)
 		}
+	}
+}
+
+func TestAvailableSubcommandNames_SplitsDeprecatedGroup(t *testing.T) {
+	root := &cobra.Command{Use: "lark-cli"}
+	root.AddGroup(&cobra.Group{ID: cmdutil.DeprecatedGroupID, Title: "Deprecated"})
+	root.AddCommand(
+		&cobra.Command{Use: "+new-cmd", RunE: func(*cobra.Command, []string) error { return nil }},
+		&cobra.Command{Use: "+old-cmd", GroupID: cmdutil.DeprecatedGroupID, RunE: func(*cobra.Command, []string) error { return nil }},
+	)
+
+	available, deprecated := availableSubcommandNames(root)
+	if len(available) != 1 || available[0] != "+new-cmd" {
+		t.Errorf("available = %v, want [+new-cmd]", available)
+	}
+	if len(deprecated) != 1 || deprecated[0] != "+old-cmd" {
+		t.Errorf("deprecated = %v, want [+old-cmd]", deprecated)
+	}
+}
+
+// unknownSubcommandRunE must split current vs deprecated subcommands into
+// separate detail buckets, while suggestions still rank across both so a
+// mistyped legacy alias resolves.
+func TestUnknownSubcommandRunE_SplitsDeprecatedBucket(t *testing.T) {
+	svc := &cobra.Command{Use: "sheets"}
+	svc.AddGroup(&cobra.Group{ID: cmdutil.DeprecatedGroupID, Title: "Deprecated"})
+	svc.AddCommand(
+		&cobra.Command{Use: "+cells-get", RunE: func(*cobra.Command, []string) error { return nil }},
+		&cobra.Command{Use: "+read", GroupID: cmdutil.DeprecatedGroupID, RunE: func(*cobra.Command, []string) error { return nil }},
+	)
+
+	err := unknownSubcommandRunE(svc, []string{"+reat"})
+	var exitErr *output.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *output.ExitError, got %T", err)
+	}
+	detail, ok := exitErr.Detail.Detail.(map[string]any)
+	if !ok {
+		t.Fatalf("detail is not a map: %#v", exitErr.Detail.Detail)
+	}
+
+	if available, _ := detail["available"].([]string); len(available) != 1 || available[0] != "+cells-get" {
+		t.Errorf("available = %v, want [+cells-get]", available)
+	}
+	deprecated, ok := detail["deprecated"].([]string)
+	if !ok || len(deprecated) != 1 || deprecated[0] != "+read" {
+		t.Errorf("deprecated = %v, want [+read]", deprecated)
+	}
+	// suggestions rank across both buckets: "+reat" is closest to +read.
+	suggestions, _ := detail["suggestions"].([]string)
+	found := false
+	for _, s := range suggestions {
+		if s == "+read" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("suggestions %v should include +read (typo target)", suggestions)
 	}
 }

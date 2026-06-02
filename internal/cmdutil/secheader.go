@@ -75,8 +75,6 @@ func BaseSecurityHeaders() http.Header {
 	h.Set(HeaderVersion, build.Version)
 	h.Set(HeaderBuild, DetectBuildKind())
 	h.Set(HeaderUserAgent, UserAgentValue())
-	h.Set("x-tt-env", "ppe_moa_canvas")
-	h.Set("x-use-ppe", "1")
 	if v := AgentTraceValue(); v != "" {
 		h.Set(HeaderAgentTrace, v)
 	}

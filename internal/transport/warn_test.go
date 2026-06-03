@@ -44,7 +44,7 @@ func TestWarnIfProxied_WithProxy(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://corp-proxy:3128")
 
 	var buf bytes.Buffer
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 
 	out := buf.String()
 	if out == "" {
@@ -70,27 +70,10 @@ func TestWarnIfProxied_WithoutProxy(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no output when no proxy is set, got: %s", buf.String())
-	}
-}
-
-func TestWarnIfProxied_SilentWhenNonInteractive(t *testing.T) {
-	proxyWarningOnce = sync.Once{}
-
-	// Non-interactive (interactive=false) mirrors agent / CI / piped invocations
-	// where stdin is not a TTY. The proxy warning must be suppressed so callers
-	// that parse stdout as JSON — often merging streams with `2>&1` — are not
-	// corrupted by a stray stderr line.
-	t.Setenv("HTTPS_PROXY", "http://corp-proxy:3128")
-
-	var buf bytes.Buffer
-	WarnIfProxied(&buf, false)
-
-	if buf.Len() != 0 {
-		t.Errorf("expected no warning in non-interactive mode, got: %s", buf.String())
 	}
 }
 
@@ -105,7 +88,7 @@ func TestWarnIfProxied_SilentWhenDisabled(t *testing.T) {
 	t.Setenv(EnvNoProxy, "1")
 
 	var buf bytes.Buffer
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no warning when proxy is disabled, got: %s", buf.String())
@@ -122,10 +105,10 @@ func TestWarnIfProxied_OnlyOnce(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://proxy:1234")
 
 	var buf bytes.Buffer
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 	first := buf.String()
 
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 	second := buf.String()
 
 	if first == "" {
@@ -154,7 +137,7 @@ func TestWarnIfProxied_ProxyPluginEnabled(t *testing.T) {
 	t.Setenv(EnvNoProxy, "1")
 
 	var buf bytes.Buffer
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 	out := buf.String()
 
 	if !strings.Contains(out, "127.0.0.1:3128") {
@@ -186,7 +169,7 @@ func TestWarnIfProxied_ProxyPluginCustomCAWarns(t *testing.T) {
 	t.Cleanup(func() { proxyPluginStatus = old })
 
 	var buf bytes.Buffer
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 	out := buf.String()
 
 	if !strings.Contains(out, "custom CA") {
@@ -212,7 +195,7 @@ func TestWarnIfProxied_ProxyPluginEnabledRedactsCredentials(t *testing.T) {
 	t.Cleanup(func() { proxyPluginStatus = old })
 
 	var buf bytes.Buffer
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 	out := buf.String()
 
 	if strings.Contains(out, "s3cret") {
@@ -260,7 +243,7 @@ func TestWarnIfProxied_RedactsCredentials(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://admin:s3cret@proxy:8080")
 
 	var buf bytes.Buffer
-	WarnIfProxied(&buf, true)
+	WarnIfProxied(&buf)
 
 	out := buf.String()
 	if bytes.Contains([]byte(out), []byte("s3cret")) {

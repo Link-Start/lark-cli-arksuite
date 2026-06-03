@@ -3,7 +3,10 @@
 
 package sheets
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // +csv-put locates with --start-cell, while +csv-get / +cells-set locate with
 // --range. Agents routinely carry --range over to +csv-put and hit a guaranteed
@@ -35,16 +38,20 @@ func TestCsvPutInput_RangeAliasForStartCell(t *testing.T) {
 	}
 }
 
-// With neither --start-cell nor --range set, +csv-put keeps its existing
-// behavior: --start-cell defaults to A1, so the paste anchors at A1.
-func TestCsvPutInput_DefaultsToA1(t *testing.T) {
+// With neither --start-cell nor --range explicitly set, csvPutInput rejects the
+// call instead of silently anchoring at the "A1" flag default. Standalone never
+// reaches this path — cobra's MarkFlagsOneRequired(start-cell, range) catches it
+// first — but a +batch-update sub-op skips cobra, so the guard must live in the
+// shared builder too. Otherwise a batch +csv-put with no anchor silently pastes
+// at A1, diverging from the standalone contract.
+func TestCsvPutInput_RequiresStartCellOrRange(t *testing.T) {
 	fv := newMapFlagViewForCommand("+csv-put", map[string]interface{}{"csv": "a,b"})
-	input, err := csvPutInput(fv, "tok", "sid", "")
-	if err != nil {
-		t.Fatalf("csvPutInput returned error: %v", err)
+	_, err := csvPutInput(fv, "tok", "sid", "")
+	if err == nil {
+		t.Fatal("csvPutInput accepted missing start-cell/range; want a required-flag error")
 	}
-	if got, _ := input["start_cell"].(string); got != "A1" {
-		t.Errorf("start_cell = %q, want %q (default)", got, "A1")
+	if !strings.Contains(err.Error(), "--start-cell or --range is required") {
+		t.Errorf("error = %q, want it to mention '--start-cell or --range is required'", err.Error())
 	}
 }
 

@@ -213,6 +213,19 @@ func sheetMoveBatchInput(fv flagView, token, sheetID, sheetName string) (map[str
 	if !fv.Changed("source-index") {
 		return nil, common.FlagErrorf("+sheet-move in +batch-update requires source_index (auto-derive needs a network lookup unavailable mid-batch)")
 	}
+	if fv.Int("source-index") < 0 {
+		return nil, common.FlagErrorf("--source-index must be >= 0")
+	}
+	// Standalone +sheet-move requires --index (see SheetMove.Validate). A batch
+	// sub-op skips that path, and mapFlagView falls back to the flag default (0),
+	// which would silently move the sheet to the front. Require it explicitly so
+	// the batch contract matches the standalone one.
+	if !fv.Changed("index") {
+		return nil, common.FlagErrorf("+sheet-move in +batch-update requires index")
+	}
+	if fv.Int("index") < 0 {
+		return nil, common.FlagErrorf("--index must be >= 0")
+	}
 	return map[string]interface{}{
 		"excel_id":     token,
 		"operation":    "move",

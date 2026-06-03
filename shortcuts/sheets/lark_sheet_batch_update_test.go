@@ -302,6 +302,39 @@ func TestBatchUpdate_ValidationGuards(t *testing.T) {
 	}
 }
 
+// TestValidateDropdownRanges_RejectsMalformedRange locks the up-front sheet!range
+// validation: entries that merely contain "!" but are otherwise malformed (empty
+// sheet, empty range, or an unparseable A1 ref) must fail at Validate rather than
+// slip through to DryRun/Execute. Covers +dropdown-update / +dropdown-delete,
+// which fan out over --ranges.
+func TestValidateDropdownRanges_RejectsMalformedRange(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		ranges string
+		want   string
+	}{
+		{"no sheet prefix at all", `["A1:A5"]`, "must include a sheet prefix"},
+		{"empty sheet name", `["!A1:A5"]`, "must use sheet!range form"},
+		{"empty range after prefix", `["Sheet1!"]`, "must use sheet!range form"},
+		{"unparseable ref", `["Sheet1!bad"]`, "invalid cell ref"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stdout, stderr, err := runShortcutCapturingErr(t, DropdownUpdate, []string{
+				"--url", testURL,
+				"--ranges", tc.ranges,
+				"--options", `["a"]`,
+				"--dry-run",
+			})
+			if err == nil || !strings.Contains(stdout+stderr+err.Error(), tc.want) {
+				t.Errorf("ranges=%s: expected error containing %q; got=%s|%s|%v", tc.ranges, tc.want, stdout, stderr, err)
+			}
+		})
+	}
+}
+
 // TestBatchUpdate_TranslatorRejects covers per-op shape errors caught by
 // translateBatchOp: unknown shortcut, missing shortcut, banned (read /
 // fan-out / legacy v2) shortcuts, hand-filled reserved keys, etc.

@@ -104,11 +104,16 @@ func batchUpdateInput(runtime *common.RuntimeContext, token string) (map[string]
 		"excel_id":   token,
 		"operations": translated,
 	}
-	if runtime.Bool("continue-on-error") {
-		input["continue_on_error"] = true
+	if runtime.Changed("continue-on-error") {
+		// An explicit --continue-on-error always wins over the envelope, so
+		// --continue-on-error=false keeps the strict-transaction default even
+		// when the --operations envelope carries continue_on_error:true.
+		if runtime.Bool("continue-on-error") {
+			input["continue_on_error"] = true
+		}
 	} else if envelope, _ := parseJSONFlag(runtime, "operations"); envelope != nil {
-		// Honor an inline override when --operations is an envelope object
-		// rather than a bare operations array.
+		// No explicit flag: honor an inline override when --operations is an
+		// envelope object rather than a bare operations array.
 		if m, ok := envelope.(map[string]interface{}); ok {
 			if v, ok := m["continue_on_error"].(bool); ok && v {
 				input["continue_on_error"] = true
@@ -471,6 +476,16 @@ func validateDropdownRanges(runtime *common.RuntimeContext) ([]string, error) {
 		s = strings.TrimSpace(s)
 		if !strings.Contains(s, "!") {
 			return nil, common.FlagErrorf("--ranges[%d] (%q) must include a sheet prefix", i, s)
+		}
+		// Validate the sheet!range shape up front so malformed entries like
+		// "!A1" (no sheet), "Sheet1!" (no range) or "Sheet1!bad" (bad ref) fail
+		// here at Validate instead of slipping through to DryRun/Execute.
+		_, sub, err := splitSheetPrefixedRange(s)
+		if err != nil {
+			return nil, common.FlagErrorf("--ranges[%d]: %v", i, err)
+		}
+		if _, _, err := rangeDimensions(sub); err != nil {
+			return nil, common.FlagErrorf("--ranges[%d] (%q): %v", i, s, err)
 		}
 		out = append(out, s)
 	}

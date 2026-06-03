@@ -271,6 +271,52 @@ func TestExecute_BatchUpdate_Translated(t *testing.T) {
 	}
 }
 
+// TestExecute_BatchUpdate_ContinueOnErrorPrecedence locks the flag-vs-envelope
+// precedence: an explicit --continue-on-error=false must keep the strict
+// transaction even when the --operations envelope carries continue_on_error:true,
+// while an envelope value still applies when the flag is absent. Guards against
+// the regression where the flag was read by value (runtime.Bool) rather than by
+// Changed().
+func TestExecute_BatchUpdate_ContinueOnErrorPrecedence(t *testing.T) {
+	t.Parallel()
+	envelope := `{"operations":[{"shortcut":"+cells-set","input":{"sheet-id":"sh1","range":"A1","cells":[[{"value":1}]]}}],"continue_on_error":true}`
+
+	t.Run("explicit false overrides envelope", func(t *testing.T) {
+		t.Parallel()
+		stub := toolOutputStub(testToken, "write", `{"results":[{"ok":true}]}`)
+		_, err := runShortcutWithStubs(t, BatchUpdate, []string{
+			"--url", testURL,
+			"--operations", envelope,
+			"--continue-on-error=false",
+			"--yes",
+		}, stub)
+		if err != nil {
+			t.Fatalf("execute failed: %v", err)
+		}
+		input := decodeToolInput(t, decodeRawEnvelopeBody(t, stub.CapturedBody), "batch_update")
+		if input["continue_on_error"] == true {
+			t.Errorf("explicit --continue-on-error=false must win over envelope; got continue_on_error=%#v", input["continue_on_error"])
+		}
+	})
+
+	t.Run("envelope applies when flag absent", func(t *testing.T) {
+		t.Parallel()
+		stub := toolOutputStub(testToken, "write", `{"results":[{"ok":true}]}`)
+		_, err := runShortcutWithStubs(t, BatchUpdate, []string{
+			"--url", testURL,
+			"--operations", envelope,
+			"--yes",
+		}, stub)
+		if err != nil {
+			t.Fatalf("execute failed: %v", err)
+		}
+		input := decodeToolInput(t, decodeRawEnvelopeBody(t, stub.CapturedBody), "batch_update")
+		if input["continue_on_error"] != true {
+			t.Errorf("envelope continue_on_error:true should apply when --continue-on-error absent; got %#v", input["continue_on_error"])
+		}
+	})
+}
+
 // TestExecute_WorkbookCreate covers the create POST + first-sheet lookup +
 // set_cell_range follow-up. Stubs all three endpoints.
 func TestExecute_WorkbookCreate(t *testing.T) {

@@ -310,10 +310,18 @@ func csvPutInput(runtime flagView, token, sheetID, sheetName string) (map[string
 	// defaults to "A1" and is therefore never empty. A range like "A1:H17"
 	// collapses to its top-left cell; +csv-put pastes from the anchor and
 	// auto-expands, so the range's lower-right bound is irrelevant.
+	//
+	// Standalone enforces "one of --start-cell / --range" via cobra's
+	// MarkFlagsOneRequired (see PostMount). A +batch-update sub-op never runs
+	// cobra, so without an explicit check the default "A1" silently wins and the
+	// paste lands at A1 instead of failing like the standalone command. Mirror
+	// the standalone contract: when --start-cell is absent, --range is mandatory.
 	if !runtime.Changed("start-cell") {
-		if rng := strings.TrimSpace(runtime.Str("range")); rng != "" {
-			anchor = strings.TrimSpace(strings.SplitN(rng, ":", 2)[0])
+		rng := strings.TrimSpace(runtime.Str("range"))
+		if rng == "" {
+			return nil, common.FlagErrorf("--start-cell or --range is required")
 		}
+		anchor = strings.TrimSpace(strings.SplitN(rng, ":", 2)[0])
 	}
 	if anchor == "" {
 		return nil, common.FlagErrorf("--start-cell is required")

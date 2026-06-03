@@ -467,6 +467,69 @@ func TestBatchOp_ErrorEquivalence(t *testing.T) {
 	}
 }
 
+// TestBatchOp_GuardsBeyondCobra locks the two batch sub-ops whose standalone
+// required-flag enforcement lives OUTSIDE the shared *Input builder — so it is
+// invisible to TestBatchOp_ErrorEquivalence and was missed by the refactor:
+//   - +csv-put: standalone requires one-of(start-cell, range) via cobra's
+//     MarkFlagsOneRequired (PostMount); a batch sub-op never runs cobra.
+//   - +sheet-move: standalone requires --index (>=0) and source-index>=0 in
+//     SheetMove.Validate; the batch path uses a dedicated builder.
+//
+// Without an explicit guard, mapFlagView's flag-default fallback silently wins
+// (start-cell→"A1", index→0), so the batch sub-op diverges from the standalone
+// contract instead of failing.
+func TestBatchOp_GuardsBeyondCobra(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name         string
+		subShortcut  string
+		subInput     string
+		wantContains string
+	}{
+		{
+			name:         "+csv-put without start-cell or range",
+			subShortcut:  "+csv-put",
+			subInput:     `{"sheet-id":"sh1","csv":"a,b"}`,
+			wantContains: "--start-cell or --range is required",
+		},
+		{
+			name:         "+sheet-move without index",
+			subShortcut:  "+sheet-move",
+			subInput:     `{"sheet-id":"sh1","source-index":2}`,
+			wantContains: "requires index",
+		},
+		{
+			name:         "+sheet-move negative index",
+			subShortcut:  "+sheet-move",
+			subInput:     `{"sheet-id":"sh1","source-index":2,"index":-1}`,
+			wantContains: "--index must be >= 0",
+		},
+		{
+			name:         "+sheet-move negative source-index",
+			subShortcut:  "+sheet-move",
+			subInput:     `{"sheet-id":"sh1","source-index":-1,"index":0}`,
+			wantContains: "--source-index must be >= 0",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var subInput map[string]interface{}
+			if err := json.Unmarshal([]byte(tc.subInput), &subInput); err != nil {
+				t.Fatalf("bad subInput JSON: %v", err)
+			}
+			rawOp := map[string]interface{}{"shortcut": tc.subShortcut, "input": subInput}
+			_, err := translateBatchOp(rawOp, testToken, 0)
+			if err == nil {
+				t.Fatalf("translateBatchOp accepted bad input; want error containing %q", tc.wantContains)
+			}
+			if !strings.Contains(err.Error(), tc.wantContains) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantContains)
+			}
+		})
+	}
+}
+
 // TestBatchOp_RejectsBadSubOpInput pins down the secondary guard: for
 // inputs that cobra's MarkFlagRequired catches on the standalone path,
 // the +batch-update sub-op (which has no cobra layer) must still reject

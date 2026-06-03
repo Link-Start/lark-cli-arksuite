@@ -86,7 +86,15 @@ COMMUNITY:
 More help: lark-cli <command> --help`
 
 // Execute runs the root command and returns the process exit code.
+// rawInvocationArgs holds os.Args[1:] captured at Execute() entry. cobra's
+// UnknownFlags whitelist (installUnknownSubcommandGuard) swallows unknown flags
+// before they reach a group's RunE, so unknownSubcommandRunE re-derives them
+// from here. It stays nil in unit tests that invoke a RunE directly with
+// explicit args — correct, since those don't exercise the whitelist path.
+var rawInvocationArgs []string
+
 func Execute() int {
+	rawInvocationArgs = os.Args[1:]
 	inv, err := BootstrapInvocationContext(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -290,6 +298,19 @@ func handleRootError(f *cmdutil.Factory, err error) int {
 		return exitErr.Code
 	}
 
+	// A backward-compat alias records its deprecation notice in PreRunE, which
+	// runs before cobra's required-flag validation — but a missing required flag
+	// fails before RunE and lands here, where the bare "Error:" line would drop
+	// the notice. When a deprecation is pending, route through the structured
+	// envelope so the migration hint still reaches the caller; all other errors
+	// keep the existing plain output.
+	if deprecation.GetPending() != nil {
+		output.WriteErrorEnvelope(errOut, &output.ExitError{
+			Code:   1,
+			Detail: &output.ErrDetail{Type: "validation", Message: err.Error()},
+		}, string(f.ResolvedIdentity))
+		return 1
+	}
 	fmt.Fprintln(errOut, "Error:", err)
 	return 1
 }
@@ -356,6 +377,26 @@ func installUnknownSubcommandGuard(cmd *cobra.Command) {
 // they have moved to the typed surface.
 func unknownSubcommandRunE(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
+		// A bare group (e.g. `sheets`) legitimately prints help. But an unknown
+		// flag placed before any subcommand (`sheets --badflag`) is whitelisted
+		// away by installUnknownSubcommandGuard, which also leaves args empty —
+		// without this check it would silently fall through to help + exit 0.
+		// Recover the swallowed flag tokens and fail structured so agents (and
+		// the flagDidYouMean contract) still see a real error.
+		if unknown := unknownFlagTokens(cmd, rawInvocationArgs); len(unknown) > 0 {
+			return &output.ExitError{
+				Code: output.ExitValidation,
+				Detail: &output.ErrDetail{
+					Type:    "unknown_flag",
+					Message: fmt.Sprintf("unknown flag %s before a subcommand for %q", strings.Join(unknown, ", "), cmd.CommandPath()),
+					Hint:    fmt.Sprintf("flags belong to a subcommand; run `%s --help` to list subcommands and their flags", cmd.CommandPath()),
+					Detail: map[string]any{
+						"unknown_flags": unknown,
+						"command_path":  cmd.CommandPath(),
+					},
+				},
+			}
+		}
 		return cmd.Help()
 	}
 	unknown := args[0]
@@ -391,6 +432,56 @@ func unknownSubcommandRunE(cmd *cobra.Command, args []string) error {
 			Detail:  detail,
 		},
 	}
+}
+
+// unknownFlagTokens returns the -/-- tokens in rawArgs that cmd does not define.
+// installUnknownSubcommandGuard whitelists unknown flags on pure groups so a
+// mistyped subcommand still reaches the suggestion path; the side effect is that
+// a lone unknown flag (no subcommand) is swallowed, leaving the group to fall
+// through to help. This recovers those tokens so the caller can fail structured.
+func unknownFlagTokens(cmd *cobra.Command, rawArgs []string) []string {
+	var unknown []string
+	for _, a := range rawArgs {
+		if a == "--" {
+			break // everything after -- is positional
+		}
+		if len(a) < 2 || a[0] != '-' {
+			continue
+		}
+		name := strings.SplitN(strings.TrimLeft(a, "-"), "=", 2)[0]
+		if name != "" && !flagDefinedInTree(cmd, name) {
+			unknown = append(unknown, a)
+		}
+	}
+	return unknown
+}
+
+// flagDefinedInTree reports whether name is defined on cmd, its inherited
+// (persistent) flags, or any direct subcommand. The subcommand case covers a
+// user who merely omitted the subcommand — e.g. `sheets --format json`, where
+// --format is injected on every leaf shortcut, not on the group — so only a
+// genuinely unknown flag like `sheets --badflag` is reported.
+func flagDefinedInTree(cmd *cobra.Command, name string) bool {
+	short := len(name) == 1
+	known := func(c *cobra.Command, inherited bool) bool {
+		fs := c.Flags()
+		if inherited {
+			fs = c.InheritedFlags()
+		}
+		if short {
+			return fs.ShorthandLookup(name) != nil
+		}
+		return fs.Lookup(name) != nil
+	}
+	if known(cmd, false) || known(cmd, true) {
+		return true
+	}
+	for _, c := range cmd.Commands() {
+		if known(c, false) {
+			return true
+		}
+	}
+	return false
 }
 
 // availableSubcommandNames returns the invokable subcommand names of cmd, split

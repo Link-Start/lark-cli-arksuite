@@ -73,6 +73,60 @@ func TestInstallUnknownSubcommandGuard_PreservesExistingRunE(t *testing.T) {
 	}
 }
 
+func TestUnknownFlagTokens(t *testing.T) {
+	_, drive, _ := newGroupTree()
+	// Give a subcommand a flag so a misplaced-but-known flag (the user omitted
+	// the subcommand) is distinguished from a genuinely unknown one.
+	for _, c := range drive.Commands() {
+		if c.Name() == "+search" {
+			c.Flags().String("query", "", "")
+		}
+	}
+	cases := []struct {
+		name    string
+		rawArgs []string
+		want    []string
+	}{
+		{"genuinely unknown long flag", []string{"drive", "--badflag"}, []string{"--badflag"}},
+		{"flag known on a subcommand (misplaced)", []string{"drive", "--query", "x"}, nil},
+		{"no flags at all", []string{"drive"}, nil},
+		{"tokens after -- are positional", []string{"drive", "--", "--badflag"}, nil},
+		{"unknown shorthand", []string{"drive", "-Z"}, []string{"-Z"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unknownFlagTokens(drive, tc.rawArgs)
+			if len(got) != len(tc.want) {
+				t.Fatalf("unknownFlagTokens(%v) = %v, want %v", tc.rawArgs, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("token[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestUnknownSubcommandRunE_FlagBeforeSubcommandIsStructured(t *testing.T) {
+	_, drive, _ := newGroupTree()
+	installUnknownSubcommandGuard(drive.Root())
+
+	// Simulate `lark-cli drive --badflag`: the UnknownFlags whitelist swallows
+	// --badflag, so RunE sees no args; the guard must recover it from
+	// rawInvocationArgs and fail structured rather than print help + exit 0.
+	rawInvocationArgs = []string{"drive", "--badflag"}
+	t.Cleanup(func() { rawInvocationArgs = nil })
+
+	err := drive.RunE(drive, nil)
+	if err == nil {
+		t.Fatal("expected a structured unknown_flag error, got nil (help fallthrough)")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("error = %q, want it to mention an unknown flag", err.Error())
+	}
+}
+
 func TestUnknownSubcommandRunE_NoArgsShowsHelp(t *testing.T) {
 	_, drive, _ := newGroupTree()
 	installUnknownSubcommandGuard(drive.Root())

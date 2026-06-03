@@ -58,6 +58,14 @@ type Shortcut struct {
 	Validate func(ctx context.Context, runtime *RuntimeContext) error      // optional pre-execution validation
 	Execute  func(ctx context.Context, runtime *RuntimeContext) error      // main logic
 
+	// OnInvoke, when non-nil, runs from the command's cobra PreRunE — before
+	// cobra validates required flags — so its side effect fires even when the
+	// call later fails on a missing required flag (which short-circuits before
+	// Validate/Execute). The backward-compat aliases use it to record a
+	// deprecation notice that must surface regardless of whether the call
+	// validates. Fire-and-forget: no args, no return (e.g. deprecation.SetPending).
+	OnInvoke func()
+
 	// PrintFlagSchema, when non-nil, opts this shortcut into the
 	// `--print-schema --flag-name <name>` runtime introspection contract.
 	// The framework auto-injects those two system flags and short-circuits

@@ -5,8 +5,11 @@ package sheets
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/larksuite/cli/internal/output"
 )
 
 // TestFlagSchemas_EmbedParses asserts the synced flag-schemas.json
@@ -168,6 +171,32 @@ func TestPrintSchema_SystemFlagAbsentForReadOnlyShortcut(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown flag") {
 		t.Errorf("expected 'unknown flag'; got %v", err)
+	}
+}
+
+// TestPrintSchema_UnknownFlagNameIsStructured pins issue #6: an unregistered
+// --flag-name passed to --print-schema must surface as a structured
+// *output.ExitError (type print_schema_error), not a bare error string, so the
+// agent-facing introspection path stays machine-parseable.
+func TestPrintSchema_UnknownFlagNameIsStructured(t *testing.T) {
+	t.Parallel()
+	// PrintFlagSchema is wired during registration (shortcuts.go), not on the
+	// literal, so replicate that here to make Mount inject the --print-schema /
+	// --flag-name system flags.
+	sc := CellsSet
+	sc.PrintFlagSchema = printFlagSchemaFor(sc.Command)
+	_, _, err := runShortcutCapturingErr(t, sc, []string{
+		"--print-schema", "--flag-name", "nonexistent",
+	})
+	if err == nil {
+		t.Fatal("expected an error for --print-schema with an unregistered flag name")
+	}
+	var exitErr *output.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("error type = %T, want a structured *output.ExitError", err)
+	}
+	if exitErr.Detail == nil || exitErr.Detail.Type != "print_schema_error" {
+		t.Errorf("error detail = %+v, want type print_schema_error", exitErr.Detail)
 	}
 }
 

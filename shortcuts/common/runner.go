@@ -771,19 +771,26 @@ func (s Shortcut) mountDeclarative(ctx context.Context, parent *cobra.Command, f
 			return runShortcut(cmd, f, &shortcut, botOnly)
 		},
 	}
-	if shortcut.PrintFlagSchema != nil {
-		// --print-schema is pure local introspection; relax cobra's
-		// required-flag gate so callers don't need to fill in unrelated
-		// flags just to ask for a schema. ValidateRequiredFlags runs
-		// after PreRunE in cobra, so clearing the annotation here is the
-		// supported way to opt out.
+	if shortcut.PrintFlagSchema != nil || shortcut.OnInvoke != nil {
+		onInvoke := shortcut.OnInvoke
+		relaxRequiredForSchema := shortcut.PrintFlagSchema != nil
+		// PreRunE runs before cobra's ValidateRequiredFlags. Two opt-in uses:
+		//   - OnInvoke: fire a side effect (e.g. a deprecation notice) that must
+		//     surface even when the call later fails on a missing required flag.
+		//   - --print-schema: pure local introspection; relax the required-flag
+		//     gate so callers don't fill in unrelated flags just to ask for a
+		//     schema (clearing the annotation here is the supported opt-out).
 		cmd.PreRunE = func(c *cobra.Command, _ []string) error {
-			if want, _ := c.Flags().GetBool("print-schema"); !want {
-				return nil
+			if onInvoke != nil {
+				onInvoke()
 			}
-			c.Flags().VisitAll(func(fl *pflag.Flag) {
-				delete(fl.Annotations, cobra.BashCompOneRequiredFlag)
-			})
+			if relaxRequiredForSchema {
+				if want, _ := c.Flags().GetBool("print-schema"); want {
+					c.Flags().VisitAll(func(fl *pflag.Flag) {
+						delete(fl.Annotations, cobra.BashCompOneRequiredFlag)
+					})
+				}
+			}
 			return nil
 		}
 	}
@@ -808,6 +815,13 @@ func runShortcut(cmd *cobra.Command, f *cmdutil.Factory, s *Shortcut, botOnly bo
 			flagName, _ := cmd.Flags().GetString("flag-name")
 			out, err := s.PrintFlagSchema(strings.TrimSpace(flagName))
 			if err != nil {
+				// PrintFlagSchema implementations return bare errors; wrap as a
+				// structured ExitError so --print-schema (an agent-facing
+				// introspection path) yields a parseable envelope, not a plain
+				// string.
+				if _, ok := err.(*output.ExitError); !ok {
+					err = output.Errorf(output.ExitValidation, "print_schema_error", "%s", err.Error())
+				}
 				return err
 			}
 			if len(out) == 0 {

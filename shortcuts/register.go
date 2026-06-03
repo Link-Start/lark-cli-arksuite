@@ -339,6 +339,13 @@ func wrapSheetsBackwardDeprecation(list []common.Shortcut) []common.Shortcut {
 				return origExecute(ctx, runtime)
 			}
 		}
+		// The Validate/Execute wrappers above miss one path: a cobra-level
+		// required flag (MarkFlagRequired) that is absent fails at
+		// ValidateRequiredFlags, before RunE — so neither hook runs and the
+		// notice would be lost on exactly the "stale skill calls the old command
+		// and mis-supplies flags" case it exists for. OnInvoke runs from PreRunE,
+		// ahead of ValidateRequiredFlags, so the notice still surfaces there.
+		list[i].OnInvoke = func() { deprecation.SetPending(notice) }
 	}
 	return list
 }

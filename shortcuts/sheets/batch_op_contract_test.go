@@ -878,7 +878,6 @@ func TestBatchOp_RequiredFlagParity(t *testing.T) {
 		if len(business) == 0 {
 			continue // only-locator commands (sheet-delete/hide/unhide/copy/filter-delete): nothing to omit
 		}
-		cmd, business := cmd, business
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			rawOp := map[string]interface{}{"shortcut": cmd, "input": sheetSel(cmd)}

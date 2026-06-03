@@ -49,8 +49,15 @@ func newRegisterTestProgramWithTipsHelp() *cobra.Command {
 	return program
 }
 
+func withRegisterTestArgs(t *testing.T, args ...string) {
+	t.Helper()
+	orig := os.Args
+	os.Args = append([]string{"lark-cli"}, args...)
+	t.Cleanup(func() { os.Args = orig })
+}
+
 func TestAllShortcutsScopesNotNil(t *testing.T) {
-	for _, s := range allShortcuts {
+	for _, s := range AllShortcuts() {
 		hasScopes := s.Scopes != nil || s.UserScopes != nil || s.BotScopes != nil
 		if !hasScopes {
 			t.Errorf("shortcut %s/%s: Scopes is nil (must be explicitly set, use []string{} if no scopes needed)", s.Service, s.Command)
@@ -107,6 +114,30 @@ func TestRegisterShortcutsMountsBaseCommands(t *testing.T) {
 	}
 	if blockDataCmd == nil || blockDataCmd.Name() != "+dashboard-block-get-data" {
 		t.Fatalf("base dashboard block get-data shortcut not mounted: %#v", blockDataCmd)
+	}
+}
+
+func TestRegisterShortcuts_SkipsSheetsWhenInvocationTargetsOtherService(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	withRegisterTestArgs(t, "auth", "status")
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	if _, _, err := program.Find([]string{"sheets", "+workbook-info"}); err == nil {
+		t.Fatal("unexpected sheets shortcut mounted for non-sheets invocation")
+	}
+}
+
+func TestRegisterShortcuts_IncludesSheetsWhenInvocationTargetsSheets(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	withRegisterTestArgs(t, "sheets", "+workbook-info")
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	cmd, _, err := program.Find([]string{"sheets", "+workbook-info"})
+	if err != nil {
+		t.Fatalf("find sheets shortcut: %v", err)
+	}
+	if cmd == nil || cmd.Name() != "+workbook-info" {
+		t.Fatalf("sheets shortcut not mounted: %#v", cmd)
 	}
 }
 

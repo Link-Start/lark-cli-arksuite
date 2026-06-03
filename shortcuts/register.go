@@ -6,7 +6,9 @@ package shortcuts
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
+	"strings"
 
 	"github.com/larksuite/cli/shortcuts/okr"
 	"github.com/spf13/cobra"
@@ -55,40 +57,104 @@ func IsShortcutServiceAvailable(service string, brand core.LarkBrand) bool {
 	return slices.Contains(allowed, brand)
 }
 
-// allShortcuts aggregates shortcuts from all domain packages.
-var allShortcuts []common.Shortcut
+// baseShortcuts aggregates every shortcut except sheets. Sheets are kept out of
+// the global init path because their registration currently pulls in large
+// embedded flag metadata; we only mount them when the current invocation is
+// actually targeting sheets (or when completion/help needs the full tree).
+var baseShortcuts []common.Shortcut
 
 func init() {
-	allShortcuts = append(allShortcuts, apps.Shortcuts()...)
-	allShortcuts = append(allShortcuts, calendar.Shortcuts()...)
-	allShortcuts = append(allShortcuts, doc.Shortcuts()...)
-	allShortcuts = append(allShortcuts, drive.Shortcuts()...)
-	allShortcuts = append(allShortcuts, im.Shortcuts()...)
-	allShortcuts = append(allShortcuts, contact_shortcuts.Shortcuts()...)
-	allShortcuts = append(allShortcuts, sheets.Shortcuts()...)
-	// Backward-compatible sheets shortcuts (pre-refactor command names),
-	// kept under shortcuts/sheets/backward so external callers relying on the
-	// old `+create`, `+read`, `+write`, ... commands keep working alongside the
-	// refactored ones. Command names are disjoint from sheets.Shortcuts().
-	allShortcuts = append(allShortcuts, wrapSheetsBackwardDeprecation(sheetsbackward.Shortcuts())...)
-	allShortcuts = append(allShortcuts, base.Shortcuts()...)
-	allShortcuts = append(allShortcuts, event.Shortcuts()...)
-	allShortcuts = append(allShortcuts, mail.Shortcuts()...)
-	allShortcuts = append(allShortcuts, markdown.Shortcuts()...)
-	allShortcuts = append(allShortcuts, slides.Shortcuts()...)
-	allShortcuts = append(allShortcuts, minutes.Shortcuts()...)
-	allShortcuts = append(allShortcuts, task.Shortcuts()...)
-	allShortcuts = append(allShortcuts, vc.Shortcuts()...)
-	allShortcuts = append(allShortcuts, whiteboard.Shortcuts()...)
-	allShortcuts = append(allShortcuts, wiki.Shortcuts()...)
-	allShortcuts = append(allShortcuts, okr.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, apps.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, calendar.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, doc.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, drive.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, im.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, contact_shortcuts.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, base.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, event.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, mail.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, markdown.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, slides.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, minutes.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, task.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, vc.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, whiteboard.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, wiki.Shortcuts()...)
+	baseShortcuts = append(baseShortcuts, okr.Shortcuts()...)
 }
 
 // AllShortcuts returns a copy of all registered shortcuts (for dump-shortcuts).
 //
 //go:noinline
 func AllShortcuts() []common.Shortcut {
-	return append([]common.Shortcut(nil), allShortcuts...)
+	return append([]common.Shortcut(nil), allShortcuts(true)...)
+}
+
+func allShortcuts(includeSheets bool) []common.Shortcut {
+	out := append([]common.Shortcut(nil), baseShortcuts...)
+	if includeSheets {
+		out = append(out, sheets.Shortcuts()...)
+		// Backward-compatible sheets shortcuts (pre-refactor command names),
+		// kept under shortcuts/sheets/backward so external callers relying on the
+		// old `+create`, `+read`, `+write`, ... commands keep working alongside the
+		// refactored ones. Command names are disjoint from sheets.Shortcuts().
+		out = append(out, wrapSheetsBackwardDeprecation(sheetsbackward.Shortcuts())...)
+	}
+	return out
+}
+
+func shouldIncludeSheetsShortcuts(_ *cmdutil.Factory) bool {
+	args := os.Args[1:]
+	if len(args) == 0 {
+		return true
+	}
+
+	rootNames := map[string]struct{}{
+		"api":        {},
+		"auth":       {},
+		"completion": {},
+		"config":     {},
+		"doctor":     {},
+		"event":      {},
+		"help":       {},
+		"profile":    {},
+		"schema":     {},
+		"update":     {},
+	}
+	for _, sc := range baseShortcuts {
+		rootNames[sc.Service] = struct{}{}
+	}
+	rootNames["sheets"] = struct{}{}
+	rootNames["__complete"] = struct{}{}
+	rootNames["__completeNoDesc"] = struct{}{}
+
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if arg == "help" {
+			for _, next := range args[i+1:] {
+				if strings.HasPrefix(next, "-") {
+					continue
+				}
+				return next == "sheets"
+			}
+			return true
+		}
+		if _, ok := rootNames[arg]; !ok {
+			continue
+		}
+		switch arg {
+		case "sheets", "completion", "__complete", "__completeNoDesc":
+			return true
+		default:
+			return false
+		}
+	}
+
+	// Unknown argv shape: keep the pre-change conservative behavior and mount
+	// the full tree rather than accidentally hiding a command.
+	return true
 }
 
 // RegisterShortcuts registers all +shortcut commands on the program.
@@ -107,7 +173,7 @@ func RegisterShortcutsWithContext(ctx context.Context, program *cobra.Command, f
 
 	// Group by service
 	byService := make(map[string][]common.Shortcut)
-	for _, s := range allShortcuts {
+	for _, s := range allShortcuts(shouldIncludeSheetsShortcuts(f)) {
 		byService[s.Service] = append(byService[s.Service], s)
 	}
 

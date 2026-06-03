@@ -21,7 +21,6 @@ import (
 type flagView interface {
 	Str(name string) string
 	Int(name string) int
-	Int64(name string) int64
 	Float64(name string) float64
 	Bool(name string) bool
 	StrArray(name string) []string
@@ -88,10 +87,6 @@ func typedDefault(df flagDef) interface{} {
 		return df.Default == "true"
 	case "int":
 		var n int
-		fmt.Sscanf(df.Default, "%d", &n)
-		return n
-	case "int64":
-		var n int64
 		fmt.Sscanf(df.Default, "%d", &n)
 		return n
 	case "float64":
@@ -175,22 +170,6 @@ func (m mapFlagView) Int(name string) int {
 	return 0
 }
 
-func (m mapFlagView) Int64(name string) int64 {
-	v, ok := m.lookup(name)
-	if !ok {
-		return 0
-	}
-	switch t := v.(type) {
-	case float64:
-		return int64(t)
-	case int:
-		return int64(t)
-	case int64:
-		return t
-	}
-	return 0
-}
-
 func (m mapFlagView) Float64(name string) float64 {
 	v, ok := m.lookup(name)
 	if !ok {
@@ -257,7 +236,7 @@ func (m mapFlagView) Changed(name string) bool {
 
 // validateRawTypes rejects sub-op input fields whose JSON type contradicts the
 // flag's declared type in flag-defs. +batch-update skips parse-time schema
-// validation for `operations`, and Int/Int64/Float64/Bool silently fall back to
+// validation for `operations`, and Int/Float64/Bool silently fall back to
 // the zero value on a type mismatch — so without this guard a wrong-typed scalar
 // (e.g. "index":"abc" or "multiple":"true") would land as 0 / false instead of
 // erroring, writing to the wrong place. Only numeric and boolean flags are
@@ -294,7 +273,7 @@ func (m mapFlagView) validateRawTypes() error {
 			continue // unknown key — leave it for the translator / schema layer
 		}
 		switch typ {
-		case "int", "int64", "float64":
+		case "int", "float64":
 			if _, isNum := val.(float64); !isNum {
 				return fmt.Errorf("--%s must be a number, got %s", name, jsonTypeName(val))
 			}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/shortcuts/common"
 )
 
@@ -102,24 +103,24 @@ var DocsUpdate = common.Shortcut{
 func validateUpdateV1(_ context.Context, runtime *common.RuntimeContext) error {
 	mode := runtime.Str("mode")
 	if mode == "" {
-		return common.FlagErrorf("--mode is required")
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--mode is required").WithParam("--mode")
 	}
 	if !validModesV1[mode] {
-		return common.FlagErrorf("invalid --mode %q, valid: append | overwrite | replace_range | replace_all | insert_before | insert_after | delete_range", mode)
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "invalid --mode %q, valid: append | overwrite | replace_range | replace_all | insert_before | insert_after | delete_range", mode).WithParam("--mode")
 	}
 
 	if mode != "delete_range" && runtime.Str("markdown") == "" {
-		return common.FlagErrorf("--%s mode requires --markdown", mode)
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--%s mode requires --markdown", mode).WithParam("--markdown")
 	}
 
 	selEllipsis := runtime.Str("selection-with-ellipsis")
 	selTitle := runtime.Str("selection-by-title")
 	if selEllipsis != "" && selTitle != "" {
-		return common.FlagErrorf("--selection-with-ellipsis and --selection-by-title are mutually exclusive")
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--selection-with-ellipsis and --selection-by-title are mutually exclusive")
 	}
 
 	if needsSelectionV1[mode] && selEllipsis == "" && selTitle == "" {
-		return common.FlagErrorf(selectionRequiredMessageV1(mode))
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "%s", selectionRequiredMessageV1(mode))
 	}
 	if err := validateSelectionByTitleV1(selTitle); err != nil {
 		return err
@@ -142,12 +143,12 @@ func validateSelectionByTitleV1(title string) error {
 	}
 	trimmed := strings.TrimSpace(title)
 	if strings.Contains(trimmed, "\n") || strings.Contains(trimmed, "\r") {
-		return common.FlagErrorf("--selection-by-title must be a single heading line (for example: '## Section')")
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--selection-by-title must be a single heading line (for example: '## Section')").WithParam("--selection-by-title")
 	}
 	if strings.HasPrefix(trimmed, "#") {
 		return nil
 	}
-	return common.FlagErrorf("--selection-by-title must include markdown heading prefix '#'. Example: --selection-by-title '## Section'")
+	return errs.NewValidationError(errs.SubtypeInvalidArgument, "--selection-by-title must include markdown heading prefix '#'. Example: --selection-by-title '## Section'").WithParam("--selection-by-title")
 }
 
 func dryRunUpdateV1(_ context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {

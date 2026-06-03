@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/shortcuts/common"
 )
 
@@ -78,7 +79,7 @@ var DocsCreate = common.Shortcut{
 
 func validateCreateV1(_ context.Context, runtime *common.RuntimeContext) error {
 	if runtime.Str("markdown") == "" {
-		return common.FlagErrorf("--markdown is required")
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--markdown is required").WithParam("--markdown")
 	}
 	count := 0
 	if runtime.Str("folder-token") != "" {
@@ -91,7 +92,7 @@ func validateCreateV1(_ context.Context, runtime *common.RuntimeContext) error {
 		count++
 	}
 	if count > 1 {
-		return common.FlagErrorf("--folder-token, --wiki-node, and --wiki-space are mutually exclusive")
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--folder-token, --wiki-node, and --wiki-space are mutually exclusive")
 	}
 	return nil
 }

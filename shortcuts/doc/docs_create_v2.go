@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/shortcuts/common"
 )
 
@@ -22,10 +23,10 @@ func v2CreateFlags() []common.Flag {
 
 func validateCreateV2(_ context.Context, runtime *common.RuntimeContext) error {
 	if runtime.Str("content") == "" {
-		return common.FlagErrorf("--content is required")
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--content is required").WithParam("--content")
 	}
 	if runtime.Str("parent-token") != "" && runtime.Str("parent-position") != "" {
-		return common.FlagErrorf("--parent-token and --parent-position are mutually exclusive")
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--parent-token and --parent-position are mutually exclusive")
 	}
 	return nil
 }

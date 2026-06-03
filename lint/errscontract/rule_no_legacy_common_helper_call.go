@@ -17,11 +17,17 @@ import (
 var migratedCommonHelperPaths = []string{
 	"shortcuts/base/",
 	"shortcuts/calendar/",
+	"shortcuts/doc/",
 	"shortcuts/drive/",
+	"shortcuts/im/",
 	"shortcuts/mail/",
+	"shortcuts/markdown/",
 	"shortcuts/okr/",
+	"shortcuts/sheets/",
+	"shortcuts/slides/",
 	"shortcuts/task/",
 	"shortcuts/whiteboard/",
+	"shortcuts/wiki/",
 }
 
 const commonImportPath = "github.com/larksuite/cli/shortcuts/common"

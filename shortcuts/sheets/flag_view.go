@@ -272,7 +272,7 @@ func (m mapFlagView) validateRawTypes() error {
 	}
 	defs, err := loadFlagDefs()
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // fail-open: if flag-defs can't load, skip type validation rather than block the batch
 	}
 	spec, ok := defs[m.command]
 	if !ok {

@@ -401,7 +401,6 @@ func TestExecute_WorkbookCreate_EmptyArraysSkipFill(t *testing.T) {
 		{"empty values", "--values", "[]"},
 		{"empty headers", "--headers", "[]"},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			create := &httpmock.Stub{

@@ -824,3 +824,76 @@ func TestBatchOp_DispatchCoversReportedBugs(t *testing.T) {
 		t.Errorf("+rows-resize resize_height wrong: %#v", resizeIn)
 	}
 }
+
+// TestBatchOp_RequiredFlagParity is the systematic standalone-vs-batch parity
+// contract: for EVERY batchable shortcut, a +batch-update sub-op that satisfies
+// the sheet locator but omits all of the shortcut's business-required flags must
+// fail in translateBatchOp — never silently fall back to a default. The earlier
+// cases (TestBatchOp_ErrorEquivalence / GuardsBeyondCobra) cover hand-picked
+// shortcuts; this one is data-driven over batchOpDispatch + flag-defs, so it
+// guards the whole surface and auto-covers any shortcut added later. If a future
+// refactor moves a required check out of the shared *Input builder (the exact
+// failure mode behind the csv-put / sheet-move gaps), the corresponding sub-op
+// would start accepting missing args and this test fails.
+func TestBatchOp_RequiredFlagParity(t *testing.T) {
+	t.Parallel()
+	defs, err := loadFlagDefs()
+	if err != nil {
+		t.Fatalf("loadFlagDefs: %v", err)
+	}
+	// Flags supplied by the +batch-update top level (url/token), or that form the
+	// sub-op's own sheet selector, are context — not "business" inputs.
+	locator := map[string]bool{
+		"url": true, "spreadsheet-token": true,
+		"sheet-id": true, "sheet-name": true,
+		"target-sheet-id": true, "target-sheet-name": true,
+	}
+	// How each command expresses its sheet locator in a sub-op, so the error we
+	// trigger is the business one, not a missing-locator error.
+	sheetSel := func(cmd string) map[string]interface{} {
+		switch cmd {
+		case "+sheet-create": // create needs no existing-sheet anchor
+			return map[string]interface{}{}
+		case "+pivot-create": // placement selector is target-sheet-*; data source is --source
+			return map[string]interface{}{"target-sheet-id": "sh1"}
+		default:
+			return map[string]interface{}{"sheet-id": "sh1"}
+		}
+	}
+	for cmd := range batchOpDispatch {
+		spec, ok := defs[cmd]
+		if !ok {
+			t.Errorf("%s is in batchOpDispatch but has no flag-defs entry", cmd)
+			continue
+		}
+		var business []string
+		for _, fl := range spec.Flags {
+			if fl.Kind == "system" || locator[fl.Name] {
+				continue
+			}
+			if fl.Required == "required" || fl.Required == "xor" {
+				business = append(business, fl.Name)
+			}
+		}
+		if len(business) == 0 {
+			continue // only-locator commands (sheet-delete/hide/unhide/copy/filter-delete): nothing to omit
+		}
+		cmd, business := cmd, business
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			rawOp := map[string]interface{}{"shortcut": cmd, "input": sheetSel(cmd)}
+			_, err := translateBatchOp(rawOp, testToken, 0)
+			if err == nil {
+				t.Errorf("%s: a sub-op omitting business-required %v was accepted; want an error "+
+					"(batch must reject missing required flags, not silently default)", cmd, business)
+				return
+			}
+			// The sub-op DID supply a sheet selector, so a missing-locator error
+			// would mean the fixture is wrong and the business-required check never
+			// actually ran — reject that shape so the parity check stays honest.
+			if strings.Contains(err.Error(), "specify at least one of") {
+				t.Errorf("%s: got a missing-locator error, not a business-required one (fixture bug): %v", cmd, err)
+			}
+		})
+	}
+}

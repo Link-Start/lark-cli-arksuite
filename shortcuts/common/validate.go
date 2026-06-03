@@ -106,25 +106,6 @@ func ExactlyOneTyped(rt *RuntimeContext, flags ...string) error {
 	return MutuallyExclusiveTyped(rt, flags...)
 }
 
-// ValidatePageSize validates that the named flag (if set) is an integer within [minVal, maxVal].
-// It returns the parsed value (or defaultVal if the flag is empty) and any validation error.
-//
-// Deprecated: use ValidatePageSizeTyped for typed error envelopes.
-func ValidatePageSize(rt *RuntimeContext, flagName string, defaultVal, minVal, maxVal int) (int, error) {
-	s := rt.Str(flagName)
-	if s == "" {
-		return defaultVal, nil
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, FlagErrorf("invalid --%s %q: must be an integer", flagName, s)
-	}
-	if n < minVal || n > maxVal {
-		return 0, FlagErrorf("invalid --%s %d: must be between %d and %d", flagName, n, minVal, maxVal)
-	}
-	return n, nil
-}
-
 // ValidatePageSizeTyped validates that the named flag (if set) is an integer within [minVal, maxVal].
 // It returns the parsed value (or defaultVal if the flag is empty) and any validation error.
 func ValidatePageSizeTyped(rt *RuntimeContext, flagName string, defaultVal, minVal, maxVal int) (int, error) {

@@ -54,10 +54,14 @@ var SheetRead = common.Shortcut{
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := validateSheetManageToken(runtime)
 		readRange := runtime.Str("range")
-		if readRange == "" && runtime.Str("sheet-id") != "" {
+		if readRange == "" {
+			// Sheet-only selector: pass the bare sheet id through verbatim.
+			// Routing it via the range normalizer mangles ids that look
+			// A1-ish (e.g. "shtABC123" -> "shtABC123!shtABC123:shtABC123").
 			readRange = runtime.Str("sheet-id")
+		} else {
+			readRange = normalizePointRange(runtime.Str("sheet-id"), readRange)
 		}
-		readRange = normalizePointRange(runtime.Str("sheet-id"), readRange)
 		return common.NewDryRunAPI().
 			GET("/open-apis/sheets/v2/spreadsheets/:token/values/:range").
 			Set("token", token).Set("range", readRange)
@@ -66,18 +70,19 @@ var SheetRead = common.Shortcut{
 		token, _ := validateSheetManageToken(runtime)
 
 		readRange := runtime.Str("range")
-		if readRange == "" && runtime.Str("sheet-id") != "" {
-			readRange = runtime.Str("sheet-id")
-		}
-
 		if readRange == "" {
-			var err error
-			readRange, err = getFirstSheetID(runtime, token)
-			if err != nil {
-				return err
+			// Sheet-only selector: keep the resolved sheet id verbatim (see DryRun).
+			readRange = runtime.Str("sheet-id")
+			if readRange == "" {
+				var err error
+				readRange, err = getFirstSheetID(runtime, token)
+				if err != nil {
+					return err
+				}
 			}
+		} else {
+			readRange = normalizePointRange(runtime.Str("sheet-id"), readRange)
 		}
-		readRange = normalizePointRange(runtime.Str("sheet-id"), readRange)
 
 		params := map[string]interface{}{}
 		renderOption := runtime.Str("value-render-option")
@@ -124,11 +129,14 @@ var SheetWrite = common.Shortcut{
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := validateSheetManageToken(runtime)
 		writeRange := runtime.Str("range")
-		if writeRange == "" && runtime.Str("sheet-id") != "" {
-			writeRange = runtime.Str("sheet-id")
-		}
 		values, _ := parseValues2DJSON(runtime.Str("values"))
-		writeRange = normalizeWriteRange(runtime.Str("sheet-id"), writeRange, values)
+		if writeRange == "" {
+			// Sheet-only selector: build the write rect from the selector's
+			// A1 instead of treating the bare sheet id as a cell anchor.
+			writeRange = normalizeWriteRange(runtime.Str("sheet-id"), "", values)
+		} else {
+			writeRange = normalizeWriteRange(runtime.Str("sheet-id"), writeRange, values)
+		}
 		return common.NewDryRunAPI().
 			PUT("/open-apis/sheets/v2/spreadsheets/:token/values").
 			Body(map[string]interface{}{"valueRange": map[string]interface{}{"range": writeRange, "values": values}}).
@@ -143,18 +151,21 @@ var SheetWrite = common.Shortcut{
 		}
 
 		writeRange := runtime.Str("range")
-		if writeRange == "" && runtime.Str("sheet-id") != "" {
-			writeRange = runtime.Str("sheet-id")
-		}
-
 		if writeRange == "" {
-			var err error
-			writeRange, err = getFirstSheetID(runtime, token)
-			if err != nil {
-				return err
+			// Sheet-only selector: build the write rect from the selector's
+			// A1 (see DryRun). Resolve the first sheet when none was given.
+			sel := runtime.Str("sheet-id")
+			if sel == "" {
+				var err error
+				sel, err = getFirstSheetID(runtime, token)
+				if err != nil {
+					return err
+				}
 			}
+			writeRange = normalizeWriteRange(sel, "", values)
+		} else {
+			writeRange = normalizeWriteRange(runtime.Str("sheet-id"), writeRange, values)
 		}
-		writeRange = normalizeWriteRange(runtime.Str("sheet-id"), writeRange, values)
 
 		data, err := runtime.CallAPI("PUT", fmt.Sprintf("/open-apis/sheets/v2/spreadsheets/%s/values", validate.EncodePathSegment(token)), nil, map[string]interface{}{
 			"valueRange": map[string]interface{}{
@@ -200,11 +211,14 @@ var SheetAppend = common.Shortcut{
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		token, _ := validateSheetManageToken(runtime)
 		appendRange := runtime.Str("range")
-		if appendRange == "" && runtime.Str("sheet-id") != "" {
+		if appendRange == "" {
+			// Sheet-only selector: pass the bare sheet id through verbatim
+			// (see SheetRead.DryRun for the normalizer-mangling rationale).
 			appendRange = runtime.Str("sheet-id")
+		} else {
+			appendRange = normalizePointRange(runtime.Str("sheet-id"), appendRange)
 		}
 		values, _ := parseValues2DJSON(runtime.Str("values"))
-		appendRange = normalizePointRange(runtime.Str("sheet-id"), appendRange)
 		return common.NewDryRunAPI().
 			POST("/open-apis/sheets/v2/spreadsheets/:token/values_append").
 			Body(map[string]interface{}{"valueRange": map[string]interface{}{"range": appendRange, "values": values}}).
@@ -219,18 +233,19 @@ var SheetAppend = common.Shortcut{
 		}
 
 		appendRange := runtime.Str("range")
-		if appendRange == "" && runtime.Str("sheet-id") != "" {
-			appendRange = runtime.Str("sheet-id")
-		}
-
 		if appendRange == "" {
-			var err error
-			appendRange, err = getFirstSheetID(runtime, token)
-			if err != nil {
-				return err
+			// Sheet-only selector: keep the resolved sheet id verbatim (see DryRun).
+			appendRange = runtime.Str("sheet-id")
+			if appendRange == "" {
+				var err error
+				appendRange, err = getFirstSheetID(runtime, token)
+				if err != nil {
+					return err
+				}
 			}
+		} else {
+			appendRange = normalizePointRange(runtime.Str("sheet-id"), appendRange)
 		}
-		appendRange = normalizePointRange(runtime.Str("sheet-id"), appendRange)
 
 		data, err := runtime.CallAPI("POST", fmt.Sprintf("/open-apis/sheets/v2/spreadsheets/%s/values_append", validate.EncodePathSegment(token)), nil, map[string]interface{}{
 			"valueRange": map[string]interface{}{

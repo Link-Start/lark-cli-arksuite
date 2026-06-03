@@ -126,6 +126,60 @@ func TestSheetAppendDryRunNormalizesEscapedSeparator(t *testing.T) {
 	}
 }
 
+// A bare sheet selector (no --range) must pass through verbatim. Sheet ids
+// that look A1-ish (letters+digits) would otherwise be mangled by the range
+// normalizer into "<id>!<id>:<id>".
+
+func TestSheetReadDryRunSheetOnlyVerbatim(t *testing.T) {
+	t.Parallel()
+
+	runtime := newSheetsTestRuntime(t, map[string]string{
+		"spreadsheet-token": "sht_test",
+		"range":             "",
+		"sheet-id":          "shtABC123",
+	}, nil)
+
+	got := mustMarshalSheetsDryRun(t, SheetRead.DryRun(context.Background(), runtime))
+	if !strings.Contains(got, `"range":"shtABC123"`) {
+		t.Fatalf("SheetRead.DryRun() = %s, want bare sheet id verbatim", got)
+	}
+}
+
+func TestSheetWriteDryRunSheetOnlyBuildsRect(t *testing.T) {
+	t.Parallel()
+
+	runtime := newSheetsTestRuntime(t, map[string]string{
+		"spreadsheet-token": "sht_test",
+		"range":             "",
+		"sheet-id":          "shtABC123",
+		"values":            `[["x"]]`,
+	}, nil)
+
+	got := mustMarshalSheetsDryRun(t, SheetWrite.DryRun(context.Background(), runtime))
+	// Built from the sheet's A1 (A1:A1 for a 1x1 write), NOT the mangled
+	// "shtABC123!shtABC123:shtABC123" that piping a bare id through the
+	// range normalizer produced.
+	if !strings.Contains(got, `"range":"shtABC123!A1:A1"`) {
+		t.Fatalf("SheetWrite.DryRun() = %s, want rect built from sheet A1", got)
+	}
+}
+
+func TestSheetAppendDryRunSheetOnlyVerbatim(t *testing.T) {
+	t.Parallel()
+
+	runtime := newSheetsTestRuntime(t, map[string]string{
+		"spreadsheet-token": "sht_test",
+		"range":             "",
+		"sheet-id":          "shtABC123",
+		"values":            `[["foo"]]`,
+	}, nil)
+
+	got := mustMarshalSheetsDryRun(t, SheetAppend.DryRun(context.Background(), runtime))
+	if !strings.Contains(got, `"range":"shtABC123"`) {
+		t.Fatalf("SheetAppend.DryRun() = %s, want bare sheet id verbatim", got)
+	}
+}
+
 func TestSheetFindDryRunNormalizesEscapedSeparator(t *testing.T) {
 	t.Parallel()
 

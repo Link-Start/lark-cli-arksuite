@@ -95,6 +95,34 @@ func TestExecute_SheetMove_LookupsIndex(t *testing.T) {
 	}
 }
 
+// TestExecute_SheetMove_LookupsIndexByTitle covers the same lookup path as
+// above but with get_workbook_structure exposing the display name as "title"
+// (the field the real tool returns) instead of "sheet_name". lookupSheetIndex
+// must resolve --sheet-name against either key.
+func TestExecute_SheetMove_LookupsIndexByTitle(t *testing.T) {
+	t.Parallel()
+	lookup := toolOutputStub(testToken, "read", `{"sheets":[{"sheet_id":"sh1","title":"汇总","index":3}]}`)
+	move := toolOutputStub(testToken, "write", `{"sheet_id":"sh1"}`)
+	out, err := runShortcutWithStubs(t, SheetMove,
+		[]string{"--url", testURL, "--sheet-name", "汇总", "--index", "0"},
+		lookup, move,
+	)
+	if err != nil {
+		t.Fatalf("execute failed: %v\nout=%s", err, out)
+	}
+	if move.CapturedBody == nil {
+		t.Fatal("move stub didn't capture a body")
+	}
+	body := decodeRawEnvelopeBody(t, move.CapturedBody)
+	input := decodeToolInput(t, body, "modify_workbook_structure")
+	if input["sheet_id"] != "sh1" {
+		t.Errorf("sheet_id = %v, want sh1 (resolved from --sheet-name via title)", input["sheet_id"])
+	}
+	if input["source_index"].(float64) != 3 {
+		t.Errorf("source_index = %v, want 3 (from lookup)", input["source_index"])
+	}
+}
+
 // TestExecute_CellsGet covers a multi-range read end-to-end.
 func TestExecute_CellsGet(t *testing.T) {
 	t.Parallel()

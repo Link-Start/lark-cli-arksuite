@@ -965,7 +965,13 @@ func lookupSheetIndex(ctx context.Context, runtime *common.RuntimeContext, token
 			continue
 		}
 		id, _ := sm["sheet_id"].(string)
+		// get_workbook_structure surfaces the sub-sheet's display name as
+		// "title"; older/alt payloads use "sheet_name". Match either so a
+		// --sheet-name lookup resolves regardless of the field name.
 		name, _ := sm["sheet_name"].(string)
+		if name == "" {
+			name, _ = sm["title"].(string)
+		}
 		if (sheetID != "" && id == sheetID) || (sheetName != "" && name == sheetName) {
 			idx, ok := util.ToFloat64(sm["index"])
 			if !ok {

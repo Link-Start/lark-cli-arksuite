@@ -74,6 +74,7 @@ var commonEventTypes = []string{
 	"approval.approval.updated",
 	"application.application.visibility.added_v6",
 	"task.task.update_tenant_v1",
+	"task.task.update_user_access_v2",
 	"task.task.comment_updated_v1",
 	"drive.notice.comment_add_v1",
 }
@@ -85,6 +86,11 @@ var EventSubscribe = common.Shortcut{
 	Risk:        "read",
 	Scopes:      []string{}, // no direct OAPI; scopes depend on subscribed event types
 	AuthTypes:   []string{"bot"},
+	// Hidden: superseded by `event consume`. Kept executable so existing
+	// scripts keep working, but removed from --help/tab-completion so new
+	// users land on the replacement. Delete once downstream callers have
+	// migrated.
+	Hidden: true,
 	Flags: []common.Flag{
 		// Output destination — where events go
 		{Name: "output-dir", Desc: "write each event as a JSON file in this directory (default: stdout)"},

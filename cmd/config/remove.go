@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/internal/auth"
 	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/internal/core"
@@ -32,6 +33,7 @@ func NewCmdConfigRemove(f *cmdutil.Factory, runF func(*ConfigRemoveOptions) erro
 			return configRemoveRun(opts)
 		},
 	}
+	cmdutil.SetRisk(cmd, "write")
 
 	return cmd
 }
@@ -41,22 +43,24 @@ func configRemoveRun(opts *ConfigRemoveOptions) error {
 
 	config, err := core.LoadMultiAppConfig()
 	if err != nil || config == nil || len(config.Apps) == 0 {
-		return output.ErrValidation("not configured yet")
+		return errs.NewConfigError(errs.SubtypeNotConfigured, "not configured yet")
 	}
 
-	// Clean up keychain entries for all apps
+	// Save empty config first. If this fails, keep secrets and tokens intact so the
+	// existing config can still be retried instead of ending up half-removed.
+	empty := &core.MultiAppConfig{Apps: []core.AppConfig{}}
+	if err := core.SaveMultiAppConfig(empty); err != nil {
+		return errs.NewInternalError(errs.SubtypeStorage, "failed to save config: %v", err).WithCause(err)
+	}
+
+	// Clean up keychain entries for all apps after config is cleared.
 	for _, app := range config.Apps {
 		core.RemoveSecretStore(app.AppSecret, f.Keychain)
 		for _, user := range app.Users {
-			auth.RemoveStoredToken(app.AppId, user.UserOpenId)
+			_ = auth.RemoveStoredToken(app.AppId, user.UserOpenId)
 		}
 	}
 
-	// Save empty config
-	empty := &core.MultiAppConfig{Apps: []core.AppConfig{}}
-	if err := core.SaveMultiAppConfig(empty); err != nil {
-		return output.Errorf(output.ExitInternal, "internal", "failed to save config: %v", err)
-	}
 	output.PrintSuccess(f.IOStreams.ErrOut, "Configuration removed")
 	userCount := 0
 	for _, app := range config.Apps {

@@ -10,7 +10,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/larksuite/cli/internal/vfs/localfileio"
 )
+
+var testPC = &parseCtx{fio: &localfileio.LocalFileIO{}}
 
 func TestParseHelpers(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -30,36 +34,39 @@ func TestParseHelpers(t *testing.T) {
 		t.Fatalf("write temp file err=%v", err)
 	}
 	_ = tmp.Close()
-	obj, err := parseJSONObject(`{"name":"demo"}`, "json")
+	obj, err := parseJSONObject(testPC, `{"name":"demo"}`, "json")
 	if err != nil || obj["name"] != "demo" {
 		t.Fatalf("obj=%v err=%v", obj, err)
 	}
-	if _, err := parseJSONObject(`[1]`, "json"); err == nil || !strings.Contains(err.Error(), "invalid JSON object") {
+	if _, err := parseJSONObject(testPC, `[1]`, "json"); err == nil || !strings.Contains(err.Error(), "--json must be a JSON object") || !strings.Contains(err.Error(), "match the documented shape") || strings.Contains(err.Error(), "array") {
 		t.Fatalf("err=%v", err)
 	}
-	obj, err = parseJSONObject("@"+tmp.Name(), "json")
+	if _, err := parseJSONObject(testPC, `null`, "json"); err == nil || !strings.Contains(err.Error(), "--json must be a JSON object") {
+		t.Fatalf("err=%v", err)
+	}
+	obj, err = parseJSONObject(testPC, "@"+tmp.Name(), "json")
 	if err != nil || obj["name"] != "from-file" {
 		t.Fatalf("file obj=%v err=%v", obj, err)
 	}
-	arr, err := parseJSONArray(`[1,2]`, "items")
+	arr, err := parseJSONArray(testPC, `[1,2]`, "items")
 	if err != nil || len(arr) != 2 {
 		t.Fatalf("arr=%v err=%v", arr, err)
 	}
-	if _, err := parseJSONArray(`{"a":1}`, "items"); err == nil || !strings.Contains(err.Error(), "invalid JSON array") {
+	if _, err := parseJSONArray(testPC, `{"a":1}`, "items"); err == nil || !strings.Contains(err.Error(), "invalid JSON array") {
 		t.Fatalf("err=%v", err)
 	}
-	list, err := parseStringListFlexible("a, b, ,c", "fields")
+	list, err := parseStringListFlexible(testPC, "a, b, ,c", "fields")
 	if err != nil || !reflect.DeepEqual(list, []string{"a", "b", "c"}) {
 		t.Fatalf("list=%v err=%v", list, err)
 	}
-	list, err = parseStringListFlexible(`["x","y"]`, "fields")
+	list, err = parseStringListFlexible(testPC, `["x","y"]`, "fields")
 	if err != nil || !reflect.DeepEqual(list, []string{"x", "y"}) {
 		t.Fatalf("list=%v err=%v", list, err)
 	}
-	if _, err := parseStringListFlexible(`[1]`, "fields"); err == nil || !strings.Contains(err.Error(), "invalid JSON string array") {
+	if _, err := parseStringListFlexible(testPC, `[1]`, "fields"); err == nil || !strings.Contains(err.Error(), "invalid JSON string array") {
 		t.Fatalf("err=%v", err)
 	}
-	if _, err := parseJSONValue("{", "json"); err == nil || !strings.Contains(err.Error(), "tip: pass a JSON object/array directly") {
+	if _, err := parseJSONValue(testPC, "{", "json"); err == nil || !strings.Contains(err.Error(), "tip: pass a valid JSON directly") || !strings.Contains(err.Error(), "@file.json") || !strings.Contains(err.Error(), "complex JSON/DSL") {
 		t.Fatalf("err=%v", err)
 	}
 	if !reflect.DeepEqual(parseStringList("m,n"), []string{"m", "n"}) {
@@ -182,19 +189,69 @@ func TestBaseV3Helpers(t *testing.T) {
 }
 
 func TestRecordAndChunkHelpers(t *testing.T) {
-	records, err := normalizeRecordInputs(`[{"record_id":"rec_1","fields":{"Name":"Alice"}},{"Name":"Bob"}]`)
-	if err != nil || len(records) != 2 {
-		t.Fatalf("records=%v err=%v", records, err)
-	}
-	if _, err := normalizeRecordInputs(`[1]`); err == nil || !strings.Contains(err.Error(), "must be an object") {
-		t.Fatalf("err=%v", err)
-	}
+	records := []map[string]interface{}{{"record_id": "rec_1"}, {"record_id": "rec_2"}}
 	if len(chunkRecords(records, 1)) != 2 || len(chunkStringIDs([]string{"a", "b", "c"}, 2)) != 2 {
 		t.Fatalf("chunk helpers mismatch")
 	}
 }
 
-func TestResolveAndSimplifyHelpers(t *testing.T) {
+func TestRecordSelectionHelpers(t *testing.T) {
+	recordIDs, err := normalizeRecordIDs([]string{" rec_1 ", "rec_2"})
+	if err != nil || !reflect.DeepEqual(recordIDs, []string{"rec_1", "rec_2"}) {
+		t.Fatalf("recordIDs=%v err=%v", recordIDs, err)
+	}
+	if _, err := normalizeRecordIDs([]interface{}{}); err == nil || !strings.Contains(err.Error(), "provide at least one --record-id") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := normalizeRecordIDs([]interface{}{"rec_1", "rec_1"}); err == nil || !strings.Contains(err.Error(), "duplicate record id") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := normalizeRecordIDs([]interface{}{" "}); err == nil || !strings.Contains(err.Error(), "must not be empty") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := normalizeRecordIDs([]interface{}{1}); err == nil || !strings.Contains(err.Error(), "must be a string") {
+		t.Fatalf("err=%v", err)
+	}
+	tooManyRecords := make([]string, maxRecordSelectionCount+1)
+	if _, err := normalizeRecordIDs(tooManyRecords); err == nil || !strings.Contains(err.Error(), "exceeds maximum limit") {
+		t.Fatalf("err=%v", err)
+	}
+
+	fields, err := normalizeRecordGetSelectFields([]interface{}{" Name ", "fld_status"})
+	if err != nil || !reflect.DeepEqual(fields, []string{"Name", "fld_status"}) {
+		t.Fatalf("fields=%v err=%v", fields, err)
+	}
+	if fields, err := normalizeRecordGetSelectFields(nil); err != nil || fields != nil {
+		t.Fatalf("fields=%v err=%v", fields, err)
+	}
+	if _, err := normalizeRecordGetSelectFields([]interface{}{"Name", "Name"}); err == nil || !strings.Contains(err.Error(), "duplicate field id") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := normalizeRecordGetSelectFields([]interface{}{""}); err == nil || !strings.Contains(err.Error(), "must not be empty") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := normalizeRecordGetSelectFields([]interface{}{1}); err == nil || !strings.Contains(err.Error(), "must be a string") {
+		t.Fatalf("err=%v", err)
+	}
+	tooManyFields := make([]string, maxBatchGetSelectFieldCount+1)
+	if _, err := normalizeRecordGetSelectFields(tooManyFields); err == nil || !strings.Contains(err.Error(), "exceeds maximum limit") {
+		t.Fatalf("err=%v", err)
+	}
+
+	fields, err = resolveRecordGetSelectFields(nil, map[string]interface{}{"select_fields": []interface{}{"Name"}})
+	if err != nil || !reflect.DeepEqual(fields, []string{"Name"}) {
+		t.Fatalf("fields=%v err=%v", fields, err)
+	}
+	if _, err := resolveRecordGetSelectFields([]string{"Name"}, map[string]interface{}{"select_fields": []interface{}{"Age"}}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := resolveRecordGetSelectFields(nil, map[string]interface{}{"select_fields": []interface{}{}}); err == nil || !strings.Contains(err.Error(), "must not be empty") {
+		t.Fatalf("err=%v", err)
+	}
+
+}
+
+func TestResolveHelpers(t *testing.T) {
 	fields := []map[string]interface{}{{"id": "fld_1", "name": "Name", "type": "text"}, {"field_id": "fld_2", "field_name": "Age", "type": "number", "multiple": true}}
 	tables := []map[string]interface{}{{"id": "tbl_1", "name": "Orders"}}
 	views := []map[string]interface{}{{"id": "vew_1", "name": "Main", "type": "grid"}}
@@ -209,14 +266,6 @@ func TestResolveAndSimplifyHelpers(t *testing.T) {
 	}
 	if _, err := resolveViewRef(views, "Missing"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err=%v", err)
-	}
-	simplifiedFields := simplifyFields(fields)
-	if len(simplifiedFields) != 2 {
-		t.Fatalf("simplifiedFields=%v", simplifiedFields)
-	}
-	simplifiedViews := simplifyViews(views)
-	if len(simplifiedViews) != 1 {
-		t.Fatalf("simplifiedViews=%v", simplifiedViews)
 	}
 }
 
@@ -262,10 +311,10 @@ func TestFilterAndSortHelpers(t *testing.T) {
 }
 
 func TestJSONInputHelpers(t *testing.T) {
-	if got, err := loadJSONInput(`{"name":"demo"}`, "json"); err != nil || got != `{"name":"demo"}` {
+	if got, err := loadJSONInput(testPC, `{"name":"demo"}`, "json"); err != nil || got != `{"name":"demo"}` {
 		t.Fatalf("got=%q err=%v", got, err)
 	}
-	if _, err := loadJSONInput("@", "json"); err == nil || !strings.Contains(err.Error(), "file path cannot be empty") {
+	if _, err := loadJSONInput(testPC, "@", "json"); err == nil || !strings.Contains(err.Error(), "file path cannot be empty") {
 		t.Fatalf("err=%v", err)
 	}
 	tmp := t.TempDir()
@@ -281,15 +330,15 @@ func TestJSONInputHelpers(t *testing.T) {
 	if err := os.WriteFile(emptyPath, []byte("  \n"), 0o644); err != nil {
 		t.Fatalf("write empty file err=%v", err)
 	}
-	if _, err := loadJSONInput("@"+emptyPath, "json"); err == nil || !strings.Contains(err.Error(), "is empty") {
+	if _, err := loadJSONInput(testPC, "@"+emptyPath, "json"); err == nil || !strings.Contains(err.Error(), "is empty") {
 		t.Fatalf("err=%v", err)
 	}
 	syntaxErr := formatJSONError("json", "object", &json.SyntaxError{Offset: 7})
-	if !strings.Contains(syntaxErr.Error(), "near byte 7") || !strings.Contains(syntaxErr.Error(), "tip: pass a JSON object/array directly") {
+	if !strings.Contains(syntaxErr.Error(), "near byte 7") || !strings.Contains(syntaxErr.Error(), "tip: pass a valid JSON directly") || !strings.Contains(syntaxErr.Error(), "@file.json") || !strings.Contains(syntaxErr.Error(), "complex JSON/DSL") {
 		t.Fatalf("syntaxErr=%v", syntaxErr)
 	}
 	typeErr := formatJSONError("json", "object", &json.UnmarshalTypeError{Field: "filter_info"})
-	if !strings.Contains(typeErr.Error(), `field "filter_info"`) {
+	if !strings.Contains(typeErr.Error(), `field "filter_info"`) || !strings.Contains(typeErr.Error(), "tip: pass a valid JSON directly") || !strings.Contains(typeErr.Error(), "@file.json") || !strings.Contains(typeErr.Error(), "complex JSON/DSL") {
 		t.Fatalf("typeErr=%v", typeErr)
 	}
 }
@@ -309,9 +358,6 @@ func TestIdentifierAndValueHelpers(t *testing.T) {
 	}
 	if viewName(map[string]interface{}{"view_name": "Main"}) != "Main" {
 		t.Fatalf("viewName alt key failed")
-	}
-	if viewType(map[string]interface{}{"view_type": "grid"}) != "grid" {
-		t.Fatalf("viewType alt key failed")
 	}
 	if !valueEmpty(nil) || !valueEmpty("  ") || !valueEmpty([]interface{}{}) || !valueEmpty(map[string]interface{}{}) {
 		t.Fatalf("valueEmpty empty cases failed")

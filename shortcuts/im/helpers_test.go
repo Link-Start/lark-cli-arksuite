@@ -4,16 +4,15 @@
 package im
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/shortcuts/common"
 )
 
@@ -265,10 +264,13 @@ func TestParseMp4Duration(t *testing.T) {
 }
 
 func TestParseMediaDuration(t *testing.T) {
-	if got := parseMediaDuration("test.pdf", "pdf"); got != "" {
+	rt := newBotShortcutRuntime(t, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("unexpected")
+	}))
+	if got := parseMediaDuration(rt, "test.pdf", "pdf"); got != "" {
 		t.Fatalf("parseMediaDuration(pdf) = %q, want empty", got)
 	}
-	if got := parseMediaDuration("nonexistent.opus", "opus"); got != "" {
+	if got := parseMediaDuration(rt, "nonexistent.opus", "opus"); got != "" {
 		t.Fatalf("parseMediaDuration(missing) = %q, want empty", got)
 	}
 }
@@ -471,21 +473,115 @@ func TestNormalizeDownloadOutputPath(t *testing.T) {
 }
 
 func TestDownloadIMResourceToPathHTTPClientError(t *testing.T) {
-	runtime := &common.RuntimeContext{
-		Factory: &cmdutil.Factory{
-			HttpClient: func() (*http.Client, error) {
-				return nil, errors.New("http client unavailable")
-			},
-			IOStreams: &cmdutil.IOStreams{
-				Out:    &bytes.Buffer{},
-				ErrOut: &bytes.Buffer{},
-			},
-		},
-	}
+	// DoAPIStream now goes through APIClient, which requires a fully constructed Factory.
+	// When HttpClient returns an error, NewAPIClient fails, and getAPIClient propagates it.
+	runtime := newBotShortcutRuntime(t, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("http client unavailable")
+	}))
 
-	_, _, err := downloadIMResourceToPath(context.Background(), runtime, "om_123", "img_123", "image", "out.bin")
+	_, _, err := downloadIMResourceToPath(context.Background(), runtime, "om_123", "img_123", "image", "out.bin", true)
 	if err == nil || !strings.Contains(err.Error(), "http client unavailable") {
 		t.Fatalf("downloadIMResourceToPath() error = %v", err)
+	}
+}
+
+func TestParseTotalSize(t *testing.T) {
+	tests := []struct {
+		name         string
+		contentRange string
+		want         int64
+		wantErr      string
+	}{
+		{name: "normal", contentRange: "bytes 0-131071/104857600", want: 104857600},
+		{name: "single probe chunk", contentRange: "bytes 0-131071/131072", want: 131072},
+		{name: "single small chunk", contentRange: "bytes 0-15/16", want: 16},
+		{name: "empty", contentRange: "", wantErr: "content-range is empty"},
+		{name: "invalid prefix", contentRange: "items 0-15/16", wantErr: `unsupported content-range: "items 0-15/16"`},
+		{name: "missing total", contentRange: "bytes 0-15/", wantErr: `unsupported content-range: "bytes 0-15/"`},
+		{name: "wildcard", contentRange: "bytes */16", wantErr: `unsupported content-range: "bytes */16"`},
+		{name: "unknown total size", contentRange: "bytes 0-99/*", wantErr: `unknown total size in content-range: "bytes 0-99/*"`},
+		{name: "invalid total", contentRange: "bytes 0-15/not-a-number", wantErr: "parse total size:"},
+		{name: "zero total size", contentRange: "bytes 0-0/0", wantErr: "invalid total size: 0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseTotalSize(tt.contentRange)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseTotalSize() error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseTotalSize() unexpected error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("parseTotalSize() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseContentDispositionFilename(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "empty header", header: "", want: ""},
+		{name: "no filename param", header: "attachment", want: ""},
+		{name: "plain filename", header: `attachment; filename="report.xlsx"`, want: "report.xlsx"},
+		{name: "unquoted filename", header: `attachment; filename=report.xlsx`, want: "report.xlsx"},
+		{name: "RFC 5987 UTF-8 encoded", header: `attachment; filename*=UTF-8''%E5%AD%A3%E5%BA%A6%E6%8A%A5%E5%91%8A.xlsx`, want: "季度报告.xlsx"},
+		{name: "RFC 5987 takes priority over plain", header: `attachment; filename="fallback.xlsx"; filename*=UTF-8''%E5%AD%A3%E5%BA%A6%E6%8A%A5%E5%91%8A.xlsx`, want: "季度报告.xlsx"},
+		{name: "path traversal stripped", header: `attachment; filename="../../etc/passwd"`, want: "passwd"},
+		{name: "windows path stripped", header: `attachment; filename="C:\\Windows\\evil.exe"`, want: "evil.exe"},
+		{name: "control char rejected", header: "attachment; filename=\"evil\x01file.txt\"", want: ""},
+		{name: "malformed header", header: "not/valid/mime; ===", want: ""},
+		{name: "whitespace trimmed", header: `attachment; filename="  report.pdf  "`, want: "report.pdf"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseContentDispositionFilename(tt.header); got != tt.want {
+				t.Fatalf("parseContentDispositionFilename(%q) = %q, want %q", tt.header, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveIMResourceDownloadPath(t *testing.T) {
+	tests := []struct {
+		name                string
+		safePath            string
+		contentType         string
+		contentDisposition  string
+		userSpecifiedOutput bool
+		want                string
+	}{
+		// safePath already has extension: always return as-is
+		{name: "user path with ext, no CD", safePath: "out.xlsx", contentType: "application/pdf", userSpecifiedOutput: true, want: "out.xlsx"},
+		{name: "user path with ext, CD present", safePath: "out.xlsx", contentDisposition: `attachment; filename="server.pdf"`, userSpecifiedOutput: true, want: "out.xlsx"},
+		// No --output: use CD filename when present
+		{name: "default path, CD filename", safePath: "file_xxx", contentDisposition: `attachment; filename="季度报告.xlsx"`, want: "季度报告.xlsx"},
+		{name: "default path, CD RFC5987", safePath: "file_xxx", contentDisposition: `attachment; filename*=UTF-8''%E5%AD%A3%E5%BA%A6%E6%8A%A5%E5%91%8A.xlsx`, want: "季度报告.xlsx"},
+		{name: "default path, no CD, MIME ext", safePath: "file_xxx", contentType: "application/pdf", want: "file_xxx.pdf"},
+		{name: "default path, no CD, unknown MIME", safePath: "file_xxx", contentType: "application/x-unknown", want: "file_xxx"},
+		{name: "default path, CD with dir component", safePath: "downloads/file_xxx", contentDisposition: `attachment; filename="report.xlsx"`, want: "downloads/report.xlsx"},
+		// User --output without extension: use CD filename's extension
+		{name: "user path no ext, CD with ext", safePath: "myfile", contentDisposition: `attachment; filename="server.pdf"`, userSpecifiedOutput: true, want: "myfile.pdf"},
+		{name: "user path no ext, CD no ext, MIME ext", safePath: "myfile", contentDisposition: `attachment; filename="noext"`, contentType: "image/png", userSpecifiedOutput: true, want: "myfile.png"},
+		{name: "user path no ext, no CD, MIME ext", safePath: "myfile", contentType: "image/jpeg", userSpecifiedOutput: true, want: "myfile.jpg"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveIMResourceDownloadPath(tt.safePath, tt.contentType, tt.contentDisposition, tt.userSpecifiedOutput)
+			if got != tt.want {
+				t.Fatalf("resolveIMResourceDownloadPath() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -497,6 +593,7 @@ func TestShortcuts(t *testing.T) {
 
 	want := []string{
 		"+chat-create",
+		"+chat-list",
 		"+chat-messages-list",
 		"+chat-search",
 		"+chat-update",
@@ -506,6 +603,9 @@ func TestShortcuts(t *testing.T) {
 		"+messages-search",
 		"+messages-send",
 		"+threads-messages-list",
+		"+flag-create",
+		"+flag-cancel",
+		"+flag-list",
 	}
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("Shortcuts() commands = %#v, want %#v", commands, want)

@@ -9,6 +9,14 @@ import (
 	"testing"
 )
 
+func ensureFreshRegistry(t *testing.T) {
+	t.Helper()
+	resetInit()
+	t.Setenv("LARKSUITE_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("LARKSUITE_CLI_REMOTE_META", "off")
+	Init()
+}
+
 func TestLoadScopePriorities(t *testing.T) {
 	priorities := LoadScopePriorities()
 	if len(priorities) == 0 {
@@ -123,6 +131,7 @@ func TestComputeMinimumScopeSet(t *testing.T) {
 }
 
 func TestComputeMinimumScopeSet_Tenant(t *testing.T) {
+	ensureFreshRegistry(t)
 	minSet := ComputeMinimumScopeSet("tenant")
 	if len(minSet) == 0 {
 		if len(ListFromMetaProjects()) == 0 {
@@ -222,14 +231,9 @@ func TestLoadAutoApproveSet(t *testing.T) {
 		t.Fatal("expected non-empty auto-approve set")
 	}
 
-	// From scope_overrides.json allow list
-	if !aaSet["calendar:calendar.event:create"] {
-		t.Error("expected calendar:calendar.event:create in auto-approve set (from allow list)")
-	}
-
-	// Verify allow list entries are present
+	// From scope_priorities.json recommend=="true"
 	if !aaSet["sheets:spreadsheet:read"] {
-		t.Error("expected sheets:spreadsheet:read in auto-approve set (from allow list)")
+		t.Error("expected sheets:spreadsheet:read in auto-approve set (recommend=true in priorities)")
 	}
 
 	t.Logf("Auto-approve set has %d scopes", len(aaSet))
@@ -248,16 +252,10 @@ func TestLoadPlatformAutoApproveSet(t *testing.T) {
 
 func TestLoadOverrideAutoApproveAllow(t *testing.T) {
 	allowSet := LoadOverrideAutoApproveAllow()
-	if len(allowSet) == 0 {
-		t.Fatal("expected non-empty override allow set")
-	}
-
-	// Known entries from scope_overrides.json
-	if !allowSet["calendar:calendar.event:create"] {
-		t.Error("expected calendar:calendar.event:create in allow set")
-	}
-	if !allowSet["mail:event"] {
-		t.Error("expected mail:event in allow set")
+	// recommend.allow in scope_overrides.json is intentionally empty:
+	// no scopes are special-cased into the auto-approve set anymore.
+	if len(allowSet) != 0 {
+		t.Errorf("expected empty override allow set, got %d entries", len(allowSet))
 	}
 }
 
@@ -268,9 +266,9 @@ func TestLoadOverrideAutoApproveDeny(t *testing.T) {
 }
 
 func TestIsAutoApproveScope(t *testing.T) {
-	// Known auto-approve scope (in allow list)
-	if !IsAutoApproveScope("calendar:calendar.event:create") {
-		t.Error("expected calendar:calendar.event:create to be auto-approve")
+	// Known auto-approve scope (recommend=true in scope_priorities.json)
+	if !IsAutoApproveScope("sheets:spreadsheet:read") {
+		t.Error("expected sheets:spreadsheet:read to be auto-approve")
 	}
 
 	// Completely unknown scope
@@ -281,9 +279,8 @@ func TestIsAutoApproveScope(t *testing.T) {
 
 func TestFilterAutoApproveScopes(t *testing.T) {
 	scopes := []string{
-		"calendar:calendar.event:create", // auto-approve (in allow list)
-		"zzz:unknown:scope",              // not in auto-approve
-		"sheets:spreadsheet:read",        // auto-approve (in allow list)
+		"sheets:spreadsheet:read", // auto-approve (recommend=true in priorities)
+		"zzz:unknown:scope",       // not in auto-approve
 	}
 
 	result := FilterAutoApproveScopes(scopes)
@@ -291,10 +288,10 @@ func TestFilterAutoApproveScopes(t *testing.T) {
 		t.Fatal("expected at least 1 auto-approve scope in result")
 	}
 
-	// Check that calendar:calendar.event:create is included
+	// Check that sheets:spreadsheet:read is included
 	found := false
 	for _, s := range result {
-		if s == "calendar:calendar.event:create" {
+		if s == "sheets:spreadsheet:read" {
 			found = true
 		}
 		// Ensure unknown scopes are not included
@@ -303,7 +300,7 @@ func TestFilterAutoApproveScopes(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected calendar:calendar.event:create in result")
+		t.Error("expected sheets:spreadsheet:read in result")
 	}
 }
 
@@ -553,5 +550,56 @@ func TestCollectScopesForProjects_NonexistentProject(t *testing.T) {
 	scopes := CollectScopesForProjects([]string{"nonexistent_project_xyz"}, "user")
 	if len(scopes) != 0 {
 		t.Errorf("expected empty scopes for nonexistent project, got %d", len(scopes))
+	}
+}
+
+// --- auth_domain functions ---
+
+func TestGetAuthDomain_Configured(t *testing.T) {
+	// whiteboard has auth_domain: "docs" in service_descriptions.json
+	if got := GetAuthDomain("whiteboard"); got != "docs" {
+		t.Errorf("GetAuthDomain(whiteboard) = %q, want %q", got, "docs")
+	}
+}
+
+func TestGetAuthDomain_NotConfigured(t *testing.T) {
+	if got := GetAuthDomain("calendar"); got != "" {
+		t.Errorf("GetAuthDomain(calendar) = %q, want empty", got)
+	}
+}
+
+func TestGetAuthDomain_Unknown(t *testing.T) {
+	if got := GetAuthDomain("nonexistent_xyz"); got != "" {
+		t.Errorf("GetAuthDomain(nonexistent_xyz) = %q, want empty", got)
+	}
+}
+
+func TestHasAuthDomain(t *testing.T) {
+	if !HasAuthDomain("whiteboard") {
+		t.Error("HasAuthDomain(whiteboard) = false, want true")
+	}
+	if HasAuthDomain("calendar") {
+		t.Error("HasAuthDomain(calendar) = true, want false")
+	}
+}
+
+func TestGetAuthChildren(t *testing.T) {
+	children := GetAuthChildren("docs")
+	found := false
+	for _, c := range children {
+		if c == "whiteboard" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("GetAuthChildren(docs) = %v, want to contain 'whiteboard'", children)
+	}
+}
+
+func TestGetAuthChildren_NoChildren(t *testing.T) {
+	children := GetAuthChildren("calendar")
+	if len(children) != 0 {
+		t.Errorf("GetAuthChildren(calendar) = %v, want empty", children)
 	}
 }

@@ -4,9 +4,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/internal/core"
 	"github.com/larksuite/cli/internal/output"
@@ -32,6 +35,7 @@ func NewCmdConfigShow(f *cmdutil.Factory, runF func(*ConfigShowOptions) error) *
 			return configShowRun(opts)
 		},
 	}
+	cmdutil.SetRisk(cmd, "read")
 
 	return cmd
 }
@@ -40,12 +44,19 @@ func configShowRun(opts *ConfigShowOptions) error {
 	f := opts.Factory
 
 	config, err := core.LoadMultiAppConfig()
-	if err != nil || config == nil || len(config.Apps) == 0 {
-		fmt.Fprintf(f.IOStreams.ErrOut, "Not configured yet. Config file path: %s\n", core.GetConfigPath())
-		fmt.Fprintln(f.IOStreams.ErrOut, "Run `lark-cli config init` to initialize.")
-		return nil
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return core.NotConfiguredError()
+		}
+		return errs.NewConfigError(errs.SubtypeInvalidConfig, "failed to load config: %v", err).WithCause(err)
 	}
-	app := config.Apps[0]
+	if config == nil || len(config.Apps) == 0 {
+		return core.NotConfiguredError()
+	}
+	app := config.CurrentAppConfig(f.Invocation.Profile)
+	if app == nil {
+		return errs.NewConfigError(errs.SubtypeNotConfigured, "no active profile").WithHint("run: lark-cli profile list")
+	}
 	users := "(no logged-in users)"
 	if len(app.Users) > 0 {
 		var userStrs []string
@@ -55,6 +66,8 @@ func configShowRun(opts *ConfigShowOptions) error {
 		users = strings.Join(userStrs, ", ")
 	}
 	output.PrintJson(f.IOStreams.Out, map[string]interface{}{
+		"workspace": core.CurrentWorkspace().Display(),
+		"profile":   app.ProfileName(),
 		"appId":     app.AppId,
 		"appSecret": "****",
 		"brand":     app.Brand,

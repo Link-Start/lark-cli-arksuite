@@ -7,10 +7,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/internal/cmdutil"
+	"github.com/larksuite/cli/internal/httpmock"
 	"github.com/larksuite/cli/shortcuts/common"
 	"github.com/spf13/cobra"
 )
@@ -116,6 +119,36 @@ func TestBuildSearchParamsSystemLabelAsFolder(t *testing.T) {
 	}
 	if filterBody["label"] != nil {
 		t.Fatalf("expected label to be absent, got %#v", filterBody["label"])
+	}
+}
+
+func TestMailTriageRejectsDangerousQueryWithTypedValidation(t *testing.T) {
+	f, stdout, _, _ := mailShortcutTestFactory(t)
+	err := runMountedMailShortcut(t, MailTriage, []string{
+		"+triage", "--as", "user", "--query", "bad\x01",
+	}, f, stdout)
+	if err == nil {
+		t.Fatal("expected dangerous --query to return an error")
+	}
+	p, ok := errs.ProblemOf(err)
+	if !ok {
+		t.Fatalf("expected typed problem, got %T: %v", err, err)
+	}
+	if p.Category != errs.CategoryValidation {
+		t.Errorf("category = %q, want %q", p.Category, errs.CategoryValidation)
+	}
+	if p.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype = %q, want %q", p.Subtype, errs.SubtypeInvalidArgument)
+	}
+	var validationErr *errs.ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	if validationErr.Param != "--query" {
+		t.Errorf("param = %q, want --query", validationErr.Param)
+	}
+	if !strings.Contains(p.Message, "control character") {
+		t.Errorf("message should mention control character, got: %s", p.Message)
 	}
 }
 
@@ -706,6 +739,43 @@ func TestFormatAddressFallbackToAddress(t *testing.T) {
 	}
 }
 
+func TestShouldRetryTriageAPIError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "rate limit",
+			err:  errs.NewAPIError(errs.SubtypeRateLimit, "too many requests"),
+			want: true,
+		},
+		{
+			name: "network",
+			err:  errs.NewNetworkError(errs.SubtypeNetworkTransport, "dial timeout"),
+			want: true,
+		},
+		{
+			name: "validation",
+			err:  errs.NewValidationError(errs.SubtypeInvalidArgument, "bad query"),
+			want: false,
+		},
+		{
+			name: "plain",
+			err:  assertErr("legacy plain error"),
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldRetryTriageAPIError(tc.err); got != tc.want {
+				t.Fatalf("shouldRetryTriageAPIError() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // --- extractTriageMessageIDs ---
 
 func TestExtractTriageMessageIDsStringItems(t *testing.T) {
@@ -967,4 +1037,717 @@ func TestBuildSearchParamsPageToken(t *testing.T) {
 	}
 }
 
+// --- resolveTriagePageSize ---
+
+func TestResolveTriagePageSizeDefaultMax(t *testing.T) {
+	rt := runtimeForMailTriageTest(t, nil) // max=0 (unset) → normalizeTriageMax returns 20
+	got := resolveTriagePageSize(rt)
+	if got != 20 {
+		t.Fatalf("expected 20, got %d", got)
+	}
+}
+
+func TestResolveTriagePageSizeFromMax(t *testing.T) {
+	rt := runtimeForMailTriageTest(t, map[string]string{"max": "30"})
+	got := resolveTriagePageSize(rt)
+	if got != 30 {
+		t.Fatalf("expected 30, got %d", got)
+	}
+}
+
+func TestResolveTriagePageSizeFromPageSize(t *testing.T) {
+	rt := runtimeForMailTriageTest(t, map[string]string{"page-size": "10"})
+	got := resolveTriagePageSize(rt)
+	if got != 10 {
+		t.Fatalf("expected 10, got %d", got)
+	}
+}
+
+func TestResolveTriagePageSizePageSizeOverridesMax(t *testing.T) {
+	rt := runtimeForMailTriageTest(t, map[string]string{"max": "30", "page-size": "5"})
+	got := resolveTriagePageSize(rt)
+	if got != 5 {
+		t.Fatalf("expected page-size=5 to override max=30, got %d", got)
+	}
+}
+
+func TestResolveTriagePageSizeClamped(t *testing.T) {
+	rt := runtimeForMailTriageTest(t, map[string]string{"page-size": "999"})
+	got := resolveTriagePageSize(rt)
+	if got != 400 {
+		t.Fatalf("expected clamped to 400, got %d", got)
+	}
+}
+
+// --- page-token path validation ---
+
+func TestResolveTriagePathSearchTokenContinuation(t *testing.T) {
+	// search: token without --query is valid (continuation)
+	useSearch, err := resolveTriagePath(mustParseTriagePageToken(t, "search:abc123"), "", triageFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !useSearch {
+		t.Fatal("search: prefix should select search path")
+	}
+}
+
+func TestResolveTriagePathListTokenConflictsWithQuery(t *testing.T) {
+	// list: token + --query → error (query would be silently ignored)
+	_, err := resolveTriagePath(mustParseTriagePageToken(t, "list:abc123"), "hello", triageFilter{})
+	if err == nil {
+		t.Fatal("expected error for list: token with --query")
+	}
+}
+
+func TestResolveTriagePathListTokenConflictsWithSearchFilter(t *testing.T) {
+	// list: token + search-only filter field → error
+	_, err := resolveTriagePath(mustParseTriagePageToken(t, "list:abc123"), "", triageFilter{From: []string{"a@b.com"}})
+	if err == nil {
+		t.Fatal("expected error for list: token with search-only filter")
+	}
+}
+
+func TestResolveTriagePathListTokenWithListFilter(t *testing.T) {
+	// list: token + list-compatible filter → OK
+	useSearch, err := resolveTriagePath(mustParseTriagePageToken(t, "list:abc123"), "", triageFilter{Folder: "inbox"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if useSearch {
+		t.Fatal("list: prefix should select list path")
+	}
+}
+
+func TestResolveTriagePathBareTokenRejected(t *testing.T) {
+	// Bare tokens are rejected at parse time, not at resolveTriagePath time
+	_, err := parseTriagePageToken("baretoken123")
+	if err == nil {
+		t.Fatal("expected error for bare token without prefix")
+	}
+	if !strings.Contains(err.Error(), "prefix") {
+		t.Fatalf("error should mention prefix, got: %v", err)
+	}
+}
+
+func TestResolveTriagePathEmptyToken(t *testing.T) {
+	// No token → falls back to usesTriageSearchPath
+	useSearch, err := resolveTriagePath(triagePageToken{}, "hello", triageFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !useSearch {
+		t.Fatal("query present → should use search path")
+	}
+
+	useSearch, err = resolveTriagePath(triagePageToken{}, "", triageFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if useSearch {
+		t.Fatal("no query → should use list path")
+	}
+}
+
+func TestPageTokenSearchPrefixStripped(t *testing.T) {
+	raw := "search:72d98412d30aa6af"
+	got := strings.TrimPrefix(raw, "search:")
+	if got != "72d98412d30aa6af" {
+		t.Fatalf("expected stripped token, got %q", got)
+	}
+}
+
+func TestPageTokenListPrefixStripped(t *testing.T) {
+	raw := "list:FfccvoqPd_loLhtcRx8cx"
+	got := strings.TrimPrefix(raw, "list:")
+	if got != "FfccvoqPd_loLhtcRx8cx" {
+		t.Fatalf("expected stripped token, got %q", got)
+	}
+}
+
+func TestPageTokenBareTokenRejected(t *testing.T) {
+	_, err := parseTriagePageToken("FfccvoqPd_loLhtcRx8cx")
+	if err == nil {
+		t.Fatal("expected error for bare token without prefix")
+	}
+	if !strings.Contains(err.Error(), "prefix") {
+		t.Fatalf("error should mention prefix requirement, got: %v", err)
+	}
+}
+
+// --- DryRun with page-size ---
+
+func TestMailTriageDryRunPageSizeOverridesMax(t *testing.T) {
+	runtime := runtimeForMailTriageTest(t, map[string]string{
+		"max":       "50",
+		"page-size": "8",
+		"filter":    `{"folder_id":"INBOX"}`,
+	})
+	apis := dryRunAPIsForMailTriageTest(t, MailTriage.DryRun(context.Background(), runtime))
+	if len(apis) < 1 {
+		t.Fatalf("expected at least 1 dry-run api, got %d", len(apis))
+	}
+	got, ok := apis[0].Params["page_size"].(float64)
+	if !ok {
+		t.Fatalf("page_size type mismatch, got %#v", apis[0].Params["page_size"])
+	}
+	if int(got) != 8 {
+		t.Fatalf("expected page_size=8 (from --page-size), got %d", int(got))
+	}
+}
+
+func TestMailTriageDryRunSearchPathCapsPageSizeAt15(t *testing.T) {
+	runtime := runtimeForMailTriageTest(t, map[string]string{
+		"query":     "hello",
+		"page-size": "30",
+	})
+	apis := dryRunAPIsForMailTriageTest(t, MailTriage.DryRun(context.Background(), runtime))
+	if len(apis) < 1 {
+		t.Fatalf("expected at least 1 dry-run api, got %d", len(apis))
+	}
+	got, ok := apis[0].Params["page_size"].(float64)
+	if !ok {
+		t.Fatalf("page_size type mismatch, got %#v", apis[0].Params["page_size"])
+	}
+	if int(got) != searchPageMax {
+		t.Fatalf("expected page_size capped at %d, got %d", searchPageMax, int(got))
+	}
+}
+
+// --- DryRun with page-token ---
+
+func TestMailTriageDryRunListPathWithPageToken(t *testing.T) {
+	runtime := runtimeForMailTriageTest(t, map[string]string{
+		"filter":     `{"folder_id":"INBOX"}`,
+		"page-token": "list:abc123token",
+	})
+	apis := dryRunAPIsForMailTriageTest(t, MailTriage.DryRun(context.Background(), runtime))
+	if len(apis) < 1 {
+		t.Fatalf("expected at least 1 dry-run api, got %d", len(apis))
+	}
+	got, ok := apis[0].Params["page_token"]
+	if !ok {
+		t.Fatalf("expected page_token in params")
+	}
+	if got != "abc123token" {
+		t.Fatalf("expected stripped page_token='abc123token', got %v", got)
+	}
+}
+
+func TestMailTriageDryRunSearchPathWithPageToken(t *testing.T) {
+	runtime := runtimeForMailTriageTest(t, map[string]string{
+		"query":      "test",
+		"page-token": "search:def456token",
+	})
+	apis := dryRunAPIsForMailTriageTest(t, MailTriage.DryRun(context.Background(), runtime))
+	if len(apis) < 1 {
+		t.Fatalf("expected at least 1 dry-run api, got %d", len(apis))
+	}
+	got, ok := apis[0].Params["page_token"]
+	if !ok {
+		t.Fatalf("expected page_token in params")
+	}
+	if got != "def456token" {
+		t.Fatalf("expected stripped page_token='def456token', got %v", got)
+	}
+}
+
+func TestMailTriageDryRunBarePageTokenErrors(t *testing.T) {
+	runtime := runtimeForMailTriageTest(t, map[string]string{
+		"filter":     `{"folder_id":"INBOX"}`,
+		"page-token": "baretoken123",
+	})
+	dry := MailTriage.DryRun(context.Background(), runtime)
+	b, _ := json.Marshal(dry)
+	s := string(b)
+	if !strings.Contains(s, "filter_error") {
+		t.Fatalf("expected filter_error for bare token, got %s", s)
+	}
+}
+
+// --- resolveTriagePath ---
+
+func TestResolveTriagePathSearchPrefixWithoutQuery(t *testing.T) {
+	useSearch, err := resolveTriagePath(mustParseTriagePageToken(t, "search:abc"), "", triageFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !useSearch {
+		t.Fatal("search: prefix should select search path")
+	}
+}
+
+func TestResolveTriagePathListPrefixWithoutConflict(t *testing.T) {
+	useSearch, err := resolveTriagePath(mustParseTriagePageToken(t, "list:abc"), "", triageFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if useSearch {
+		t.Fatal("list: prefix should select list path")
+	}
+}
+
+func TestResolveTriagePathListPrefixWithQueryErrors(t *testing.T) {
+	_, err := resolveTriagePath(mustParseTriagePageToken(t, "list:abc"), "hello", triageFilter{})
+	if err == nil {
+		t.Fatal("expected error for list: token with --query")
+	}
+}
+
+func TestResolveTriagePathListPrefixWithSearchFilterErrors(t *testing.T) {
+	_, err := resolveTriagePath(mustParseTriagePageToken(t, "list:abc"), "", triageFilter{Subject: "test"})
+	if err == nil {
+		t.Fatal("expected error for list: token with search-only filter field")
+	}
+}
+
+func TestResolveTriagePathBareTokenErrors(t *testing.T) {
+	_, err := parseTriagePageToken("baretoken")
+	if err == nil {
+		t.Fatal("expected error for bare token")
+	}
+}
+
+func TestResolveTriagePathEmptyTokenFallsBack(t *testing.T) {
+	useSearch, err := resolveTriagePath(triagePageToken{}, "", triageFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if useSearch {
+		t.Fatal("no query → should use list path")
+	}
+
+	useSearch, err = resolveTriagePath(triagePageToken{}, "keyword", triageFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !useSearch {
+		t.Fatal("query present → should use search path")
+	}
+}
+
+// --- DryRun: token prefix overrides path ---
+
+func TestMailTriageDryRunSearchTokenWithoutQueryUsesSearchPath(t *testing.T) {
+	runtime := runtimeForMailTriageTest(t, map[string]string{
+		"page-token": "search:abc123",
+	})
+	apis := dryRunAPIsForMailTriageTest(t, MailTriage.DryRun(context.Background(), runtime))
+	if len(apis) < 1 {
+		t.Fatalf("expected at least 1 dry-run api, got %d", len(apis))
+	}
+	if apis[0].URL != mailboxPath("me", "search") {
+		t.Fatalf("search: prefix should force search path, got url %s", apis[0].URL)
+	}
+}
+
+func TestMailTriageDryRunListTokenWithQueryErrors(t *testing.T) {
+	runtime := runtimeForMailTriageTest(t, map[string]string{
+		"query":      "hello",
+		"page-token": "list:abc123",
+	})
+	dry := MailTriage.DryRun(context.Background(), runtime)
+	b, _ := json.Marshal(dry)
+	s := string(b)
+	if !strings.Contains(s, "filter_error") {
+		t.Fatalf("expected filter_error for list token with query, got %s", s)
+	}
+}
+
+// --- DryRun with no page-token has no page_token param ---
+
+func TestMailTriageDryRunNoPageTokenOmitsParam(t *testing.T) {
+	runtime := runtimeForMailTriageTest(t, map[string]string{
+		"filter": `{"folder_id":"INBOX"}`,
+	})
+	apis := dryRunAPIsForMailTriageTest(t, MailTriage.DryRun(context.Background(), runtime))
+	if len(apis) < 1 {
+		t.Fatalf("expected at least 1 dry-run api, got %d", len(apis))
+	}
+	if _, ok := apis[0].Params["page_token"]; ok {
+		t.Fatalf("page_token should not be present when --page-token is empty")
+	}
+}
+
+// --- Flag definition checks ---
+
+func TestMailTriageFlagsIncludePageTokenAndPageSize(t *testing.T) {
+	flagNames := make(map[string]bool)
+	for _, fl := range MailTriage.Flags {
+		flagNames[fl.Name] = true
+	}
+	for _, name := range []string{"page-token", "page-size", "max"} {
+		if !flagNames[name] {
+			t.Fatalf("expected flag --%s to be defined", name)
+		}
+	}
+}
+
+func mustParseTriagePageToken(t *testing.T, token string) triagePageToken {
+	t.Helper()
+	parsed, err := parseTriagePageToken(token)
+	if err != nil {
+		t.Fatalf("parseTriagePageToken(%q) failed: %v", token, err)
+	}
+	return parsed
+}
+
+// --- parseTriagePageToken / encodeTriagePageToken ---
+
+func TestEncodeTriagePageToken(t *testing.T) {
+	got := encodeTriagePageToken("search", "abc123")
+	if got != "search:abc123" {
+		t.Fatalf("expected search:abc123, got %q", got)
+	}
+}
+
+func TestEncodeTriagePageTokenEmpty(t *testing.T) {
+	got := encodeTriagePageToken("search", "")
+	if got != "" {
+		t.Fatalf("expected empty for empty raw token, got %q", got)
+	}
+}
+
+func TestParseTriagePageTokenSearch(t *testing.T) {
+	parsed, err := parseTriagePageToken("search:abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Path != "search" || parsed.RawToken != "abc123" {
+		t.Fatalf("unexpected parsed: %+v", parsed)
+	}
+}
+
+func TestParseTriagePageTokenList(t *testing.T) {
+	parsed, err := parseTriagePageToken("list:longtoken123xyz")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Path != "list" || parsed.RawToken != "longtoken123xyz" {
+		t.Fatalf("unexpected parsed: %+v", parsed)
+	}
+}
+
+func TestParseTriagePageTokenWithColonsInRawToken(t *testing.T) {
+	// Raw token may contain colons
+	parsed, err := parseTriagePageToken("search:abc:def:ghi")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Path != "search" || parsed.RawToken != "abc:def:ghi" {
+		t.Fatalf("unexpected parsed: %+v", parsed)
+	}
+}
+
+func TestParseTriagePageTokenBareRejected(t *testing.T) {
+	_, err := parseTriagePageToken("baretoken")
+	if err == nil {
+		t.Fatal("expected error for bare token")
+	}
+}
+
+func TestParseTriagePageTokenEmptyRawTokenRejected(t *testing.T) {
+	_, err := parseTriagePageToken("search:")
+	if err == nil {
+		t.Fatal("expected error for empty raw token after prefix")
+	}
+	_, err = parseTriagePageToken("list:")
+	if err == nil {
+		t.Fatal("expected error for empty raw token after prefix")
+	}
+}
+
+func TestParseTriagePageTokenEmpty(t *testing.T) {
+	parsed, err := parseTriagePageToken("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.RawToken != "" {
+		t.Fatalf("expected empty parsed, got %+v", parsed)
+	}
+}
+
+func TestParseTriagePageTokenInvalidPrefix(t *testing.T) {
+	_, err := parseTriagePageToken("unknown:abc123")
+	if err == nil {
+		t.Fatal("expected error for unknown prefix")
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }
+
+// --- mailbox_id preservation tests ---
+
+func TestMailTriageStructuredOutputPreservesMailboxID(t *testing.T) {
+	tests := []struct {
+		name      string
+		mailbox   string
+		format    string
+		args      []string
+		register  func(*httpmock.Registry, string)
+		wantCount int
+	}{
+		{
+			name:    "list json default mailbox",
+			mailbox: "me",
+			format:  "json",
+			args:    []string{"--filter", `{"folder_id":"INBOX"}`},
+			register: func(reg *httpmock.Registry, mailbox string) {
+				registerMailTriageListStub(reg, mailbox, []string{"msg_001", "msg_002"}, false, "")
+				registerMailTriageBatchStub(reg, mailbox, []map[string]interface{}{
+					mailTriageBatchMessage("msg_001", "Subject 1"),
+					mailTriageBatchMessage("msg_002", "Subject 2"),
+				})
+			},
+			wantCount: 2,
+		},
+		{
+			name:    "list data public mailbox",
+			mailbox: "shared@company.com",
+			format:  "data",
+			args:    []string{"--filter", `{"folder_id":"INBOX"}`},
+			register: func(reg *httpmock.Registry, mailbox string) {
+				registerMailTriageListStub(reg, mailbox, []string{"msg_pub_001"}, false, "")
+				registerMailTriageBatchStub(reg, mailbox, []map[string]interface{}{
+					mailTriageBatchMessage("msg_pub_001", "Shared mailbox message"),
+				})
+			},
+			wantCount: 1,
+		},
+		{
+			name:    "search json public mailbox",
+			mailbox: "shared@corp.com",
+			format:  "json",
+			args:    []string{"--query", "shared keyword"},
+			register: func(reg *httpmock.Registry, mailbox string) {
+				registerMailTriageSearchStub(reg, mailbox, []interface{}{
+					mailTriageSearchItem("search_pub_001", "Shared search"),
+				}, false, "")
+			},
+			wantCount: 1,
+		},
+		{
+			name:    "empty list json keeps top-level mailbox",
+			mailbox: "me",
+			format:  "json",
+			args:    []string{"--filter", `{"folder_id":"INBOX"}`},
+			register: func(reg *httpmock.Registry, mailbox string) {
+				registerMailTriageListStub(reg, mailbox, nil, false, "")
+			},
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, stdout, _, reg := mailShortcutTestFactory(t)
+			defer reg.Verify(t)
+
+			tt.register(reg, tt.mailbox)
+
+			args := []string{"+triage", "--format", tt.format}
+			if tt.mailbox != "me" {
+				args = append(args, "--mailbox", tt.mailbox)
+			}
+			args = append(args, tt.args...)
+
+			if err := runMountedMailShortcut(t, MailTriage, args, f, stdout); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			data := decodeMailTriageJSONOutput(t, stdout)
+			if data["mailbox_id"] != tt.mailbox {
+				t.Fatalf("top-level mailbox_id mismatch: got %v, want %q", data["mailbox_id"], tt.mailbox)
+			}
+			messages := mailTriageMessagesFromOutput(t, data)
+			if len(messages) != tt.wantCount {
+				t.Fatalf("message count mismatch: got %d, want %d", len(messages), tt.wantCount)
+			}
+			for i, msg := range messages {
+				if msg["mailbox_id"] != tt.mailbox {
+					t.Fatalf("message[%d] mailbox_id mismatch: got %v, want %q", i, msg["mailbox_id"], tt.mailbox)
+				}
+			}
+		})
+	}
+}
+
+func TestMailTriageMissingMessageMetadataStillGetsMailboxID(t *testing.T) {
+	f, stdout, _, reg := mailShortcutTestFactory(t)
+	defer reg.Verify(t)
+
+	registerMailTriageListStub(reg, "me", []string{"msg_ok", "msg_missing"}, false, "")
+	registerMailTriageBatchStub(reg, "me", []map[string]interface{}{
+		mailTriageBatchMessage("msg_ok", "Present"),
+	})
+
+	err := runMountedMailShortcut(t, MailTriage, []string{
+		"+triage",
+		"--format", "json",
+		"--filter", `{"folder_id":"INBOX"}`,
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	messages := mailTriageMessagesFromOutput(t, decodeMailTriageJSONOutput(t, stdout))
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(messages))
+	}
+	for i, msg := range messages {
+		if msg["mailbox_id"] != "me" {
+			t.Fatalf("message[%d] mailbox_id mismatch: got %v, want me", i, msg["mailbox_id"])
+		}
+	}
+	if messages[1]["message_id"] != "msg_missing" || messages[1]["error"] == nil {
+		t.Fatalf("missing metadata placeholder mismatch: %#v", messages[1])
+	}
+}
+
+func TestMailTriageTableOutputPreservesMailboxContext(t *testing.T) {
+	tests := []struct {
+		name              string
+		mailbox           string
+		hasMore           bool
+		wantMailboxColumn bool
+		wantMailboxHint   bool
+	}{
+		{name: "default mailbox", mailbox: "me"},
+		{name: "public mailbox", mailbox: "shared@company.com", hasMore: true, wantMailboxColumn: true, wantMailboxHint: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, stdout, stderr, reg := mailShortcutTestFactory(t)
+			defer reg.Verify(t)
+
+			registerMailTriageListStub(reg, tt.mailbox, []string{"msg_001"}, tt.hasMore, "next_page_token")
+			registerMailTriageBatchStub(reg, tt.mailbox, []map[string]interface{}{
+				mailTriageBatchMessage("msg_001", "Table message"),
+			})
+
+			args := []string{"+triage", "--max", "1", "--filter", `{"folder_id":"INBOX"}`}
+			if tt.mailbox != "me" {
+				args = append(args, "--mailbox", tt.mailbox)
+			}
+			if err := runMountedMailShortcut(t, MailTriage, args, f, stdout); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			out := stdout.String()
+			if got := strings.Contains(out, "mailbox_id"); got != tt.wantMailboxColumn {
+				t.Fatalf("mailbox_id column presence mismatch: got %v, want %v\nstdout:\n%s", got, tt.wantMailboxColumn, out)
+			}
+			if tt.wantMailboxColumn && !strings.Contains(out, tt.mailbox) {
+				t.Fatalf("table output should contain mailbox %q, stdout:\n%s", tt.mailbox, out)
+			}
+
+			errOut := stderr.String()
+			quotedMailbox := shellQuote(tt.mailbox)
+			if got := strings.Contains(errOut, "--mailbox "+quotedMailbox); got != tt.wantMailboxHint {
+				t.Fatalf("mailbox hint presence mismatch: got %v, want %v\nstderr:\n%s", got, tt.wantMailboxHint, errOut)
+			}
+			if !strings.Contains(errOut, "mail +message") {
+				t.Fatalf("stderr should contain mail +message tip, got:\n%s", errOut)
+			}
+		})
+	}
+}
+
+func decodeMailTriageJSONOutput(t *testing.T, stdout interface{ Bytes() []byte }) map[string]interface{} {
+	t.Helper()
+	var data map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil {
+		t.Fatalf("unmarshal stdout: %v", err)
+	}
+	return data
+}
+
+func mailTriageMessagesFromOutput(t *testing.T, data map[string]interface{}) []map[string]interface{} {
+	t.Helper()
+	rawMessages, ok := data["messages"].([]interface{})
+	if !ok {
+		t.Fatalf("messages type mismatch: %T", data["messages"])
+	}
+	messages := make([]map[string]interface{}, 0, len(rawMessages))
+	for i, item := range rawMessages {
+		msg, ok := item.(map[string]interface{})
+		if !ok {
+			t.Fatalf("messages[%d] type mismatch: %T", i, item)
+		}
+		messages = append(messages, msg)
+	}
+	return messages
+}
+
+func registerMailTriageListStub(reg *httpmock.Registry, mailbox string, items []string, hasMore bool, pageToken string) {
+	data := map[string]interface{}{
+		"items":    items,
+		"has_more": hasMore,
+	}
+	if pageToken != "" {
+		data["page_token"] = pageToken
+	}
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    mailboxPath(mailbox, "messages") + "?",
+		Body: map[string]interface{}{
+			"code": 0,
+			"data": data,
+		},
+	})
+}
+
+func registerMailTriageBatchStub(reg *httpmock.Registry, mailbox string, messages []map[string]interface{}) {
+	rawMessages := make([]interface{}, 0, len(messages))
+	for _, msg := range messages {
+		rawMessages = append(rawMessages, msg)
+	}
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    mailboxPath(mailbox, "messages", "batch_get"),
+		Body: map[string]interface{}{
+			"code": 0,
+			"data": map[string]interface{}{
+				"messages": rawMessages,
+			},
+		},
+	})
+}
+
+func registerMailTriageSearchStub(reg *httpmock.Registry, mailbox string, items []interface{}, hasMore bool, pageToken string) {
+	data := map[string]interface{}{
+		"items":    items,
+		"has_more": hasMore,
+	}
+	if pageToken != "" {
+		data["page_token"] = pageToken
+	}
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    mailboxPath(mailbox, "search"),
+		Body: map[string]interface{}{
+			"code": 0,
+			"data": data,
+		},
+	})
+}
+
+func mailTriageBatchMessage(messageID, subject string) map[string]interface{} {
+	return map[string]interface{}{
+		"message_id": messageID,
+		"subject":    subject,
+		"head_from":  map[string]interface{}{"name": "Alice", "mail_address": "alice@example.com"},
+		"folder_id":  "INBOX",
+	}
+}
+
+func mailTriageSearchItem(messageID, subject string) map[string]interface{} {
+	return map[string]interface{}{
+		"meta_data": map[string]interface{}{
+			"message_biz_id": messageID,
+			"title":          subject,
+			"from":           map[string]interface{}{"name": "Alice", "mail_address": "alice@example.com"},
+		},
+	}
+}

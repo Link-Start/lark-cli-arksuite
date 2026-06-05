@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/larksuite/cli/errs"
 	larkauth "github.com/larksuite/cli/internal/auth"
 	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/internal/core"
@@ -33,6 +34,7 @@ func NewCmdAuthLogout(f *cmdutil.Factory, runF func(*LogoutOptions) error) *cobr
 			return authLogoutRun(opts)
 		},
 	}
+	cmdutil.SetRisk(cmd, "write")
 
 	return cmd
 }
@@ -46,8 +48,8 @@ func authLogoutRun(opts *LogoutOptions) error {
 		return nil
 	}
 
-	app := &multi.Apps[0]
-	if len(app.Users) == 0 {
+	app := multi.CurrentAppConfig(f.Invocation.Profile)
+	if app == nil || len(app.Users) == 0 {
 		fmt.Fprintln(f.IOStreams.ErrOut, "Not logged in.")
 		return nil
 	}
@@ -59,7 +61,7 @@ func authLogoutRun(opts *LogoutOptions) error {
 	}
 	app.Users = []core.AppUser{}
 	if err := core.SaveMultiAppConfig(multi); err != nil {
-		return output.Errorf(output.ExitInternal, "internal", "failed to save config: %v", err)
+		return errs.NewInternalError(errs.SubtypeStorage, "failed to save config: %v", err).WithCause(err)
 	}
 	output.PrintSuccess(f.IOStreams.ErrOut, "Logged out")
 	return nil

@@ -24,11 +24,20 @@ var BaseDashboardBlockUpdate = common.Shortcut{
 		dashboardIDFlag(true),
 		blockIDFlag(true),
 		{Name: "name", Desc: "new block name"},
-		{Name: "data-config", Desc: "data config JSON object (table_name, series, count_all, group_by, filter, etc.)"},
-		{Name: "user-id-type", Desc: "user ID type: open_id / union_id / user_id"},
+		{Name: "data-config", Desc: "data_config JSON object; read dashboard-block-data-config.md for the SSOT"},
+		{Name: "user-id-type", Desc: "user ID type for user fields in filters: open_id / union_id / user_id"},
 		{Name: "no-validate", Type: "bool", Desc: "skip local data_config validation"},
 	},
+	Tips: []string{
+		`lark-cli base +dashboard-block-update --base-token <base_token> --dashboard-id <dashboard_id> --block-id <block_id> --name "Total Sales"`,
+		`lark-cli base +dashboard-block-update --base-token <base_token> --dashboard-id <dashboard_id> --block-id <block_id> --data-config '{"series":[{"field_name":"Amount","rollup":"SUM"}]}'`,
+		"Read dashboard-block-data-config.md as the SSOT for data_config templates, filters, metric rules, and type-specific fields; do not invent data_config from natural language.",
+		"Use +dashboard-block-get first to inspect the current data_config before replacing nested values.",
+		"Block type cannot be changed; delete and recreate the block to change chart type.",
+		"data_config update merges top-level keys, but each provided key is replaced as a whole.",
+	},
 	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		pc := newParseCtx(runtime)
 		if runtime.Bool("no-validate") {
 			return nil
 		}
@@ -36,25 +45,24 @@ var BaseDashboardBlockUpdate = common.Shortcut{
 		if strings.TrimSpace(raw) == "" {
 			return nil
 		}
-		cfg, err := parseJSONObject(raw, "data-config")
+		cfg, err := parseJSONObject(pc, raw, "data-config")
 		if err != nil {
 			return err
 		}
 		norm := normalizeDataConfig(cfg)
-		if errs := validateBlockDataConfig("", norm); len(errs) > 0 { // update 时不强校验类型特性
-			return formatDataConfigErrors(errs)
-		}
+		// update 时不做强类型校验（不传 type），让后端验证具体字段
 		b, _ := json.Marshal(norm)
 		_ = runtime.Cmd.Flags().Set("data-config", string(b))
 		return nil
 	},
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
+		pc := newParseCtx(runtime)
 		body := map[string]interface{}{}
 		if name := runtime.Str("name"); name != "" {
 			body["name"] = name
 		}
 		if raw := runtime.Str("data-config"); raw != "" {
-			if parsed, err := parseJSONObject(raw, "data-config"); err == nil {
+			if parsed, err := parseJSONObject(pc, raw, "data-config"); err == nil {
 				body["data_config"] = parsed
 			}
 		}

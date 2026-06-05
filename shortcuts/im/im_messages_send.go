@@ -7,10 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
+	"github.com/larksuite/cli/extension/fileio"
 	"github.com/larksuite/cli/internal/output"
-	"github.com/larksuite/cli/internal/validate"
 	"github.com/larksuite/cli/shortcuts/common"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 )
@@ -18,10 +19,12 @@ import (
 var ImMessagesSend = common.Shortcut{
 	Service:     "im",
 	Command:     "+messages-send",
-	Description: "Send a message to a chat or direct message with bot identity; bot-only; sends to chat-id or user-id with text/markdown/post/media, supports idempotency key",
+	Description: "Send a message to a chat or direct message; user/bot; sends to chat-id or user-id with text/markdown/post/media, supports idempotency key",
 	Risk:        "write",
 	Scopes:      []string{"im:message:send_as_bot"},
-	AuthTypes:   []string{"bot"},
+	UserScopes:  []string{"im:message.send_as_user", "im:message"},
+	BotScopes:   []string{"im:message:send_as_bot"},
+	AuthTypes:   []string{"bot", "user"},
 	Flags: []common.Flag{
 		{Name: "chat-id", Desc: "(required, mutually exclusive with --user-id) chat ID (oc_xxx)"},
 		{Name: "user-id", Desc: "(required, mutually exclusive with --chat-id) user open_id (ou_xxx)"},
@@ -30,11 +33,11 @@ var ImMessagesSend = common.Shortcut{
 		{Name: "text", Desc: "plain text message (auto-wrapped as JSON)"},
 		{Name: "markdown", Desc: "markdown text (auto-wrapped as post format with style optimization; image URLs auto-resolved)"},
 		{Name: "idempotency-key", Desc: "idempotency key (prevents duplicate sends)"},
-		{Name: "image", Desc: "image_key, local file path"},
-		{Name: "file", Desc: "file_key, local file path"},
-		{Name: "video", Desc: "video file_key, local file path; must be used together with --video-cover"},
-		{Name: "video-cover", Desc: "video cover image_key, local file path; required when using --video"},
-		{Name: "audio", Desc: "audio file_key, local file path"},
+		{Name: "image", Desc: "image key (img_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected)"},
+		{Name: "file", Desc: "file key (file_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected)"},
+		{Name: "video", Desc: "video file key (file_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected); must be used together with --video-cover"},
+		{Name: "video-cover", Desc: "video cover image key (img_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected); required when using --video"},
+		{Name: "audio", Desc: "audio file key (file_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected)"},
 	},
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		chatFlag := runtime.Str("chat-id")
@@ -78,10 +81,14 @@ var ImMessagesSend = common.Shortcut{
 		if desc != "" {
 			d.Desc(desc)
 		}
-		return d.
+		d.
 			POST("/open-apis/im/v1/messages").
 			Params(map[string]interface{}{"receive_id_type": receiveIdType}).
 			Body(body)
+		if chatFlag != "" {
+			d.Desc("NOTE: dry-run validates request shape only. Bot/user membership in the target chat is not verified; the real send may fail with `Bot/User can NOT be out of the chat`.")
+		}
+		return d
 	},
 	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
 		chatFlag := runtime.Str("chat-id")
@@ -96,29 +103,13 @@ var ImMessagesSend = common.Shortcut{
 		videoCoverKey := runtime.Str("video-cover")
 		audioKey := runtime.Str("audio")
 
-		if !isMediaKey(imageKey) {
-			if _, err := validate.SafeLocalFlagPath("--image", imageKey); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(fileKey) {
-			if _, err := validate.SafeLocalFlagPath("--file", fileKey); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(videoKey) {
-			if _, err := validate.SafeLocalFlagPath("--video", videoKey); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(videoCoverKey) {
-			if _, err := validate.SafeLocalFlagPath("--video-cover", videoCoverKey); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(audioKey) {
-			if _, err := validate.SafeLocalFlagPath("--audio", audioKey); err != nil {
-				return output.ErrValidation("%v", err)
+		fio := runtime.FileIO()
+		for _, mf := range []struct{ flag, val string }{
+			{"--image", imageKey}, {"--file", fileKey}, {"--video", videoKey},
+			{"--video-cover", videoCoverKey}, {"--audio", audioKey},
+		} {
+			if err := validateMediaFlagPath(fio, mf.flag, mf.val); err != nil {
+				return err
 			}
 		}
 
@@ -163,29 +154,13 @@ var ImMessagesSend = common.Shortcut{
 		videoVal := runtime.Str("video")
 		videoCoverVal := runtime.Str("video-cover")
 		audioVal := runtime.Str("audio")
-		if !isMediaKey(imageVal) {
-			if _, err := validate.SafeLocalFlagPath("--image", imageVal); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(fileVal) {
-			if _, err := validate.SafeLocalFlagPath("--file", fileVal); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(videoVal) {
-			if _, err := validate.SafeLocalFlagPath("--video", videoVal); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(videoCoverVal) {
-			if _, err := validate.SafeLocalFlagPath("--video-cover", videoCoverVal); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(audioVal) {
-			if _, err := validate.SafeLocalFlagPath("--audio", audioVal); err != nil {
-				return output.ErrValidation("%v", err)
+		fio := runtime.FileIO()
+		for _, mf := range []struct{ flag, val string }{
+			{"--image", imageVal}, {"--file", fileVal}, {"--video", videoVal},
+			{"--video-cover", videoCoverVal}, {"--audio", audioVal},
+		} {
+			if err := validateMediaFlagPath(fio, mf.flag, mf.val); err != nil {
+				return err
 			}
 		}
 		// Resolve content type
@@ -236,4 +211,16 @@ var ImMessagesSend = common.Shortcut{
 // isMediaKey returns true if the value looks like an existing API key rather than a local file path.
 func isMediaKey(value string) bool {
 	return strings.HasPrefix(value, "img_") || strings.HasPrefix(value, "file_")
+}
+
+// validateMediaFlagPath validates a media flag value as a local file path via FileIO.
+// Empty values, URLs, and media keys are skipped (not local files).
+func validateMediaFlagPath(fio fileio.FileIO, flagName, value string) error {
+	if value == "" || strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || isMediaKey(value) {
+		return nil
+	}
+	if _, err := fio.Stat(value); err != nil && !os.IsNotExist(err) {
+		return output.ErrValidation("%s: %v", flagName, err)
+	}
+	return nil
 }

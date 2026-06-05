@@ -10,7 +10,9 @@ import (
 
 	"github.com/charmbracelet/huh"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/internal/cmdutil"
+	"github.com/larksuite/cli/internal/core"
 	"github.com/larksuite/cli/internal/output"
 	"github.com/larksuite/cli/internal/registry"
 	"github.com/larksuite/cli/shortcuts"
@@ -34,8 +36,12 @@ func getDomainMetadata(lang string) []domainMeta {
 	seen := make(map[string]bool)
 	var domains []domainMeta
 
-	// 1. Domains from from_meta projects
+	// 1. Domains from from_meta projects (skip domains with auth_domain)
 	for _, project := range registry.ListFromMetaProjects() {
+		if registry.HasAuthDomain(project) {
+			seen[project] = true
+			continue
+		}
 		dm := buildDomainMeta(project, lang)
 		domains = append(domains, dm)
 		seen[project] = true
@@ -52,13 +58,14 @@ func getDomainMetadata(lang string) []domainMeta {
 	}
 
 	// 3. Auto-discover remaining shortcut services that are listed as shortcut-only domains
+	//    (skip domains with auth_domain — they are folded into their parent)
 	shortcutOnlySet := make(map[string]bool)
 	for _, n := range shortcutOnlyNames {
 		shortcutOnlySet[n] = true
 	}
 	for _, sc := range shortcuts.AllShortcuts() {
 		if !seen[sc.Service] {
-			if shortcutOnlySet[sc.Service] {
+			if shortcutOnlySet[sc.Service] && !registry.HasAuthDomain(sc.Service) {
 				dm := buildDomainMeta(sc.Service, lang)
 				domains = append(domains, dm)
 			}
@@ -100,7 +107,7 @@ func buildDomainMeta(name, lang string) domainMeta {
 }
 
 // runInteractiveLogin shows an interactive TUI form for domain and permission selection.
-func runInteractiveLogin(ios *cmdutil.IOStreams, lang string, msg *loginMsg) (*interactiveResult, error) {
+func runInteractiveLogin(ios *cmdutil.IOStreams, lang string, msg *loginMsg, brand core.LarkBrand) (*interactiveResult, error) {
 	allDomains := getDomainMetadata(lang)
 
 	// Build multi-select options
@@ -156,11 +163,11 @@ func runInteractiveLogin(ios *cmdutil.IOStreams, lang string, msg *loginMsg) (*i
 	}
 
 	if len(selectedDomains) == 0 {
-		return nil, output.ErrValidation("no domains selected")
+		return nil, errs.NewValidationError(errs.SubtypeInvalidArgument, "no domains selected").WithParam("--domain")
 	}
 
 	// Compute scope summary
-	scopes := collectScopesForDomains(selectedDomains, "user")
+	scopes := collectScopesForDomains(selectedDomains, "user", brand)
 	if permLevel == "common" {
 		scopes = registry.FilterAutoApproveScopes(scopes)
 	}
@@ -178,27 +185,6 @@ func runInteractiveLogin(ios *cmdutil.IOStreams, lang string, msg *loginMsg) (*i
 		scopePreview = strings.Join(scopes[:3], ", ") + ", ..."
 	}
 	fmt.Fprintf(ios.ErrOut, msg.SummaryScopes, len(scopes), scopePreview)
-
-	// Phase 2: confirmation
-	var confirmed bool
-	form2 := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title(msg.ConfirmAuth).
-				Value(&confirmed),
-		),
-	).WithTheme(cmdutil.ThemeFeishu())
-
-	if err := form2.Run(); err != nil {
-		if err == huh.ErrUserAborted {
-			return nil, output.ErrBare(1)
-		}
-		return nil, err
-	}
-
-	if !confirmed {
-		return nil, output.ErrBare(1)
-	}
 
 	return &interactiveResult{
 		Domains:    selectedDomains,

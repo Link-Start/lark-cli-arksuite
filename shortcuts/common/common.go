@@ -13,16 +13,6 @@ import (
 	"github.com/larksuite/cli/internal/util"
 )
 
-// RequireConfirmation blocks high-risk-write operations unless --yes is passed.
-func RequireConfirmation(risk string, yes bool, action string) error {
-	if risk != "high-risk-write" || yes {
-		return nil
-	}
-	return output.ErrWithHint(output.ExitValidation, "unsafe_operation_blocked",
-		fmt.Sprintf("high-risk operation requires confirmation: %s", action),
-		"add --yes to confirm")
-}
-
 func FormatSize(bytes int64) string {
 	if bytes < 1024 {
 		return fmt.Sprintf("%d B", bytes)
@@ -174,6 +164,9 @@ func CheckApiError(w io.Writer, result interface{}, action string) bool {
 }
 
 // HandleApiResult checks for network/API errors and returns the "data" field.
+//
+// Deprecated: use RuntimeContext.CallAPITyped (or ClassifyAPIResponse for
+// self-driven requests) for typed error envelopes.
 func HandleApiResult(result interface{}, err error, action string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, output.Errorf(output.ExitAPI, "api_error", "%s: %s", action, err)

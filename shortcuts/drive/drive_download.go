@@ -7,13 +7,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
-	// validate import used below
 
-	"github.com/larksuite/cli/internal/output"
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/extension/fileio"
 	"github.com/larksuite/cli/internal/validate"
 	"github.com/larksuite/cli/shortcuts/common"
 )
@@ -46,43 +44,47 @@ var DriveDownload = common.Shortcut{
 		overwrite := runtime.Bool("overwrite")
 
 		if err := validate.ResourceName(fileToken, "--file-token"); err != nil {
-			return output.ErrValidation("%s", err)
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "%s", err).WithParam("--file-token")
 		}
 
 		if outputPath == "" {
 			outputPath = fileToken
 		}
-		safePath, err := validate.SafeOutputPath(outputPath)
-		if err != nil {
-			return output.ErrValidation("unsafe output path: %s", err)
+
+		// Early path validation + overwrite check
+		if _, resolveErr := runtime.ResolveSavePath(outputPath); resolveErr != nil {
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "unsafe output path: %s", resolveErr).WithParam("--output")
 		}
-		if err := common.EnsureWritableFile(safePath, overwrite); err != nil {
-			return err
+		if _, statErr := runtime.FileIO().Stat(outputPath); statErr == nil && !overwrite {
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "output file already exists: %s (use --overwrite to replace)", outputPath).WithParam("--output")
 		}
 
 		fmt.Fprintf(runtime.IO().ErrOut, "Downloading: %s\n", common.MaskToken(fileToken))
 
-		apiResp, err := runtime.DoAPI(&larkcore.ApiReq{
+		resp, err := runtime.DoAPIStream(ctx, &larkcore.ApiReq{
 			HttpMethod: http.MethodGet,
 			ApiPath:    fmt.Sprintf("/open-apis/drive/v1/files/%s/download", validate.EncodePathSegment(fileToken)),
-		}, larkcore.WithFileDownload())
+		})
 		if err != nil {
-			return output.ErrNetwork("download failed: %s", err)
+			return wrapDriveNetworkErr(err, "download failed: %s", err)
+		}
+		defer resp.Body.Close()
+
+		result, err := runtime.FileIO().Save(outputPath, fileio.SaveOptions{
+			ContentType:   resp.Header.Get("Content-Type"),
+			ContentLength: resp.ContentLength,
+		}, resp.Body)
+		if err != nil {
+			return driveSaveError(err)
 		}
 
-		if apiResp.StatusCode >= 400 {
-			return output.ErrNetwork("download failed: HTTP %d: %s", apiResp.StatusCode, string(apiResp.RawBody))
+		savedPath, _ := runtime.ResolveSavePath(outputPath)
+		if savedPath == "" {
+			savedPath = outputPath
 		}
-
-		os.MkdirAll(filepath.Dir(safePath), 0755)
-
-		if err := validate.AtomicWrite(safePath, apiResp.RawBody, 0644); err != nil {
-			return output.Errorf(output.ExitInternal, "api_error", "cannot create file: %s", err)
-		}
-
 		runtime.Out(map[string]interface{}{
-			"saved_path": safePath,
-			"size_bytes": len(apiResp.RawBody),
+			"saved_path": savedPath,
+			"size_bytes": result.Size(),
 		}, nil)
 		return nil
 	},

@@ -4,6 +4,7 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -33,6 +34,7 @@ func NewCmdAuthList(f *cmdutil.Factory, runF func(*ListOptions) error) *cobra.Co
 			return authListRun(opts)
 		},
 	}
+	cmdutil.SetRisk(cmd, "read")
 
 	return cmd
 }
@@ -42,12 +44,23 @@ func authListRun(opts *ListOptions) error {
 
 	multi, _ := core.LoadMultiAppConfig()
 	if multi == nil || len(multi.Apps) == 0 {
-		fmt.Fprintln(f.IOStreams.ErrOut, "Not configured yet. Run `lark-cli config init` to initialize.")
+		// auth list is a read-only probe; the "configured but no users"
+		// branch below already returns exit 0 with a stderr hint, so we
+		// keep the same contract here. We still want the hint to be
+		// workspace-aware, so we pull the message+hint out of
+		// NotConfiguredError() instead of hard-coding it.
+		var cfgErr *core.ConfigError
+		if errors.As(core.NotConfiguredError(), &cfgErr) {
+			fmt.Fprintln(f.IOStreams.ErrOut, cfgErr.Message)
+			if cfgErr.Hint != "" {
+				fmt.Fprintln(f.IOStreams.ErrOut, "  hint: "+cfgErr.Hint)
+			}
+		}
 		return nil
 	}
 
-	app := multi.Apps[0]
-	if len(app.Users) == 0 {
+	app := multi.CurrentAppConfig(f.Invocation.Profile)
+	if app == nil || len(app.Users) == 0 {
 		fmt.Fprintln(f.IOStreams.ErrOut, "No logged-in users. Run `lark-cli auth login` to log in.")
 		return nil
 	}

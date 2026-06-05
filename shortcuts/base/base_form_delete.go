@@ -18,9 +18,13 @@ var BaseFormDelete = common.Shortcut{
 	AuthTypes:   []string{"user", "bot"},
 	HasFormat:   true,
 	Flags: []common.Flag{
-		{Name: "base-token", Desc: "Base app token (base_token)", Required: true},
+		baseTokenFlag(true),
 		{Name: "table-id", Desc: "table ID", Required: true},
 		{Name: "form-id", Desc: "form ID", Required: true},
+	},
+	Tips: []string{
+		"Use +form-list or +form-get first when the form target is ambiguous.",
+		baseHighRiskYesTip,
 	},
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		return common.NewDryRunAPI().

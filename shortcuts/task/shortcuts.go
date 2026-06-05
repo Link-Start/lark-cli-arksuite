@@ -13,9 +13,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/larksuite/cli/internal/output"
 	"github.com/larksuite/cli/shortcuts/common"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 )
+
+func inferTaskMemberType(id string) string {
+	if strings.HasPrefix(strings.TrimSpace(id), "cli_") {
+		return "app"
+	}
+	return "user"
+}
+
+func buildTaskMember(id, role string) map[string]interface{} {
+	return map[string]interface{}{
+		"id":   id,
+		"role": role,
+		"type": inferTaskMemberType(id),
+	}
+}
 
 // parseTaskTime converts a flexible time string into the Task API due/start object format.
 func parseTaskTime(timeStr string) (map[string]interface{}, error) {
@@ -77,13 +93,21 @@ func extractTasklistGuid(input string) string {
 	return input
 }
 
+// extractTaskGuid extracts a task GUID from either a raw GUID or a Feishu task
+// applink URL (e.g. ".../client/todo/task?guid=..."). The URL query parameter
+// is always named "guid" for both tasks and tasklists, so we delegate to the
+// shared parsing logic.
+func extractTaskGuid(input string) string {
+	return extractTasklistGuid(input)
+}
+
 func buildTaskCreateBody(runtime *common.RuntimeContext) (map[string]interface{}, error) {
 	body := make(map[string]interface{})
 
 	// Handle generic JSON payload if provided
 	if dataStr := runtime.Str("data"); dataStr != "" {
 		if err := json.Unmarshal([]byte(dataStr), &body); err != nil {
-			return nil, fmt.Errorf("--data must be a valid JSON object: %v", err)
+			return nil, output.ErrValidation("--data must be a valid JSON object: %v", err)
 		}
 	}
 
@@ -96,14 +120,15 @@ func buildTaskCreateBody(runtime *common.RuntimeContext) (map[string]interface{}
 		body["description"] = desc
 	}
 
+	var members []map[string]interface{}
 	if assignee := runtime.Str("assignee"); assignee != "" {
-		body["members"] = []map[string]interface{}{
-			{
-				"id":   assignee,
-				"role": "assignee",
-				"type": "user",
-			},
-		}
+		members = append(members, buildTaskMember(assignee, "assignee"))
+	}
+	if follower := runtime.Str("follower"); follower != "" {
+		members = append(members, buildTaskMember(follower, "follower"))
+	}
+	if len(members) > 0 {
+		body["members"] = members
 	}
 
 	if tasklistId := runtime.Str("tasklist-id"); tasklistId != "" {
@@ -118,7 +143,7 @@ func buildTaskCreateBody(runtime *common.RuntimeContext) (map[string]interface{}
 	if dueStr := runtime.Str("due"); dueStr != "" {
 		dueObj, err := parseTaskTime(dueStr)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse due time: %v", err)
+			return nil, output.ErrValidation("failed to parse due time: %v", err)
 		}
 		body["due"] = dueObj
 	}
@@ -129,7 +154,7 @@ func buildTaskCreateBody(runtime *common.RuntimeContext) (map[string]interface{}
 
 	summary, _ := body["summary"].(string)
 	if strings.TrimSpace(summary) == "" {
-		return nil, fmt.Errorf("task summary is required")
+		return nil, output.ErrValidation("task summary is required")
 	}
 
 	return body, nil
@@ -147,7 +172,8 @@ var CreateTask = common.Shortcut{
 	Flags: []common.Flag{
 		{Name: "summary", Desc: "task title"},
 		{Name: "description", Desc: "task description"},
-		{Name: "assignee", Desc: "assignee open_id"},
+		{Name: "assignee", Desc: "task assignee id added during create; use open_id (ou_xxx) when assignee is user, use app id (cli_xxx) when assignee is app"},
+		{Name: "follower", Desc: "task follower id added during create; use open_id (ou_xxx) when follower is user, use app id (cli_xxx) when follower is app"},
 		{Name: "due", Desc: "due date (ISO 8601 / date:YYYY-MM-DD / relative:+2d / ms timestamp)"},
 		{Name: "tasklist-id", Desc: "tasklist id or applink URL"},
 		{Name: "idempotency-key", Desc: "client token for idempotency"},
@@ -184,7 +210,7 @@ var CreateTask = common.Shortcut{
 		var result map[string]interface{}
 		if err == nil {
 			if parseErr := json.Unmarshal(apiResp.RawBody, &result); parseErr != nil {
-				return fmt.Errorf("failed to parse response: %v", parseErr)
+				return output.Errorf(output.ExitAPI, "api_error", "failed to parse response: %v", parseErr)
 			}
 		}
 
@@ -223,6 +249,7 @@ func Shortcuts() []common.Shortcut {
 	return []common.Shortcut{
 		CreateTask,
 		UpdateTask,
+		SetAncestorTask,
 		CommentTask,
 		CompleteTask,
 		ReopenTask,
@@ -230,7 +257,12 @@ func Shortcuts() []common.Shortcut {
 		FollowersTask,
 		ReminderTask,
 		GetMyTasks,
+		GetRelatedTasks,
+		SearchTask,
+		SubscribeTaskEvent,
+		UploadAttachmentTask,
 		CreateTasklist,
+		SearchTasklist,
 		AddTaskToTasklist,
 		MembersTasklist,
 	}

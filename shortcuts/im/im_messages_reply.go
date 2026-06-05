@@ -17,21 +17,23 @@ import (
 var ImMessagesReply = common.Shortcut{
 	Service:     "im",
 	Command:     "+messages-reply",
-	Description: "Reply to a message (supports thread replies) with bot identity; bot-only; supports text/markdown/post/media replies, reply-in-thread, idempotency key",
+	Description: "Reply to a message (supports thread replies); user/bot; supports text/markdown/post/media replies, reply-in-thread, idempotency key",
 	Risk:        "write",
 	Scopes:      []string{"im:message:send_as_bot"},
-	AuthTypes:   []string{"bot"},
+	UserScopes:  []string{"im:message.send_as_user", "im:message"},
+	BotScopes:   []string{"im:message:send_as_bot"},
+	AuthTypes:   []string{"bot", "user"},
 	Flags: []common.Flag{
 		{Name: "message-id", Desc: "message ID (om_xxx)", Required: true},
 		{Name: "msg-type", Default: "text", Desc: "message type for --content JSON; when using --text/--markdown/--image/--file/--video/--audio, the effective type is inferred automatically", Enum: []string{"text", "post", "image", "file", "audio", "media", "interactive", "share_chat", "share_user"}},
 		{Name: "content", Desc: "(one of --content/--text/--markdown/--image/--file/--video/--audio required) message content JSON"},
 		{Name: "text", Desc: "plain text message (auto-wrapped as JSON)"},
 		{Name: "markdown", Desc: "markdown text (auto-wrapped as post format with style optimization; image URLs auto-resolved)"},
-		{Name: "image", Desc: "image_key, local file path"},
-		{Name: "file", Desc: "file_key, local file path"},
-		{Name: "video", Desc: "video file_key, local file path; must be used together with --video-cover"},
-		{Name: "video-cover", Desc: "video cover image_key, local file path; required when using --video"},
-		{Name: "audio", Desc: "audio file_key, local file path"},
+		{Name: "image", Desc: "image key (img_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected)"},
+		{Name: "file", Desc: "file key (file_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected)"},
+		{Name: "video", Desc: "video file key (file_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected); must be used together with --video-cover"},
+		{Name: "video-cover", Desc: "video cover image key (img_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected); required when using --video"},
+		{Name: "audio", Desc: "audio file key (file_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected)"},
 		{Name: "reply-in-thread", Type: "bool", Desc: "reply in thread (message appears in thread stream instead of main chat)"},
 		{Name: "idempotency-key", Desc: "idempotency key (prevents duplicate sends)"},
 	},
@@ -89,29 +91,13 @@ var ImMessagesReply = common.Shortcut{
 		videoCoverKey := runtime.Str("video-cover")
 		audioKey := runtime.Str("audio")
 
-		if !isMediaKey(imageKey) {
-			if _, err := validate.SafeLocalFlagPath("--image", imageKey); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(fileKey) {
-			if _, err := validate.SafeLocalFlagPath("--file", fileKey); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(videoKey) {
-			if _, err := validate.SafeLocalFlagPath("--video", videoKey); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(videoCoverKey) {
-			if _, err := validate.SafeLocalFlagPath("--video-cover", videoCoverKey); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(audioKey) {
-			if _, err := validate.SafeLocalFlagPath("--audio", audioKey); err != nil {
-				return output.ErrValidation("%v", err)
+		fio := runtime.FileIO()
+		for _, mf := range []struct{ flag, val string }{
+			{"--image", imageKey}, {"--file", fileKey}, {"--video", videoKey},
+			{"--video-cover", videoCoverKey}, {"--audio", audioKey},
+		} {
+			if err := validateMediaFlagPath(fio, mf.flag, mf.val); err != nil {
+				return err
 			}
 		}
 
@@ -147,29 +133,13 @@ var ImMessagesReply = common.Shortcut{
 		audioVal := runtime.Str("audio")
 		replyInThread := runtime.Bool("reply-in-thread")
 		idempotencyKey := runtime.Str("idempotency-key")
-		if !isMediaKey(imageVal) {
-			if _, err := validate.SafeLocalFlagPath("--image", imageVal); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(fileVal) {
-			if _, err := validate.SafeLocalFlagPath("--file", fileVal); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(videoVal) {
-			if _, err := validate.SafeLocalFlagPath("--video", videoVal); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(videoCoverVal) {
-			if _, err := validate.SafeLocalFlagPath("--video-cover", videoCoverVal); err != nil {
-				return output.ErrValidation("%v", err)
-			}
-		}
-		if !isMediaKey(audioVal) {
-			if _, err := validate.SafeLocalFlagPath("--audio", audioVal); err != nil {
-				return output.ErrValidation("%v", err)
+		fio := runtime.FileIO()
+		for _, mf := range []struct{ flag, val string }{
+			{"--image", imageVal}, {"--file", fileVal}, {"--video", videoVal},
+			{"--video-cover", videoCoverVal}, {"--audio", audioVal},
+		} {
+			if err := validateMediaFlagPath(fio, mf.flag, mf.val); err != nil {
+				return err
 			}
 		}
 

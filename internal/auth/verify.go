@@ -18,19 +18,20 @@ import (
 func VerifyUserToken(ctx context.Context, sdk *lark.Client, accessToken string) error {
 	apiResp, err := sdk.Do(ctx, &larkcore.ApiReq{
 		HttpMethod:                http.MethodGet,
-		ApiPath:                   "/open-apis/authen/v1/user_info",
+		ApiPath:                   PathUserInfoV1,
 		SupportedAccessTokenTypes: []larkcore.AccessTokenType{larkcore.AccessTokenTypeUser},
 	}, larkcore.WithUserAccessToken(accessToken))
 	if err != nil {
 		return err
 	}
+	logSDKResponse(PathUserInfoV1, apiResp)
 
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 	}
 	if err := json.Unmarshal(apiResp.RawBody, &resp); err != nil {
-		return fmt.Errorf("failed to parse response: %v", err)
+		return fmt.Errorf("failed to parse response: %w", err)
 	}
 	if resp.Code != 0 {
 		return fmt.Errorf("[%d] %s", resp.Code, resp.Msg)

@@ -6,14 +6,14 @@
 
 [中文版](./README.zh.md) | [English](./README.md)
 
-The official [Lark/Feishu](https://www.larksuite.com/) CLI tool, maintained by the [larksuite](https://github.com/larksuite) team — built for humans and AI Agents. Covers core business domains including Messenger, Docs, Base, Sheets, Calendar, Mail, Tasks, Meetings, and more, with 200+ commands and 19 AI Agent [Skills](./skills/).
+The official [Lark/Feishu](https://www.larksuite.com/) CLI tool, maintained by the [larksuite](https://github.com/larksuite) team — built for humans and AI Agents. Covers core business domains including Messenger, Docs, Base, Sheets, Slides, Calendar, Mail, Tasks, Meetings, Markdown, and more, with 200+ commands and 26 AI Agent [Skills](./skills/).
 
 [Install](#installation--quick-start) · [AI Agent Skills](#agent-skills) · [Auth](#authentication) · [Commands](#three-layer-command-system) · [Advanced](#advanced-usage) · [Security](#security--risk-warnings-read-before-use) · [Contributing](#contributing)
 
 ## Why lark-cli?
 
-- **Agent-Native Design** — 19 structured [Skills](./skills/) out of the box, compatible with popular AI tools — Agents can operate Lark with zero extra setup
-- **Wide Coverage** — 11 business domains, 200+ curated commands, 19 AI Agent [Skills](./skills/)
+- **Agent-Native Design** — 24 structured [Skills](./skills/) out of the box, compatible with popular AI tools — Agents can operate Lark with zero extra setup
+- **Wide Coverage** — 18 business domains, 200+ curated commands, 26 AI Agent [Skills](./skills/)
 - **AI-Friendly & Optimized** — Every command is tested with real Agents, featuring concise parameters, smart defaults, and structured output to maximize Agent call success rates
 - **Open Source, Zero Barriers** — MIT license, ready to use, just `npm install`
 - **Up and Running in 3 Minutes** — One-click app creation, interactive login, from install to first API call in just 3 steps
@@ -22,19 +22,26 @@ The official [Lark/Feishu](https://www.larksuite.com/) CLI tool, maintained by t
 
 ## Features
 
-| Category      | Capabilities                                                                        |
-| ------------- | ----------------------------------------------------------------------------------- |
-| 📅 Calendar   | View agenda, create events, invite attendees, check free/busy status, time suggestions |
-| 💬 Messenger  | Send/reply messages, create and manage group chats, view chat history & threads, search messages, download media |
-| 📄 Docs       | Create, read, update, and search documents, read/write media & whiteboards          |
-| 📁 Drive      | Upload and download files, search docs & wiki, manage comments                      |
+| Category      | Capabilities                                                                                                                      |
+| ------------- |-----------------------------------------------------------------------------------------------------------------------------------|
+| 📅 Calendar   | View, create and update events, invite attendees, find meeting rooms, RSVP to invitations, check free/busy & time suggestions     |
+| 💬 Messenger  | Send/reply messages, create and manage group chats, view chat history & threads, search messages, download media                  |
+| 📄 Docs       | Create, read, update, and search documents, read/write media & whiteboards                                                        |
+| 📁 Drive      | Upload and download files, search docs & wiki, manage comments                                                                    |
+| 📝 Markdown   | Create, fetch, patch, and overwrite Drive-native `.md` files                                                                      |
 | 📊 Base       | Create and manage tables, fields, records, views, dashboards, workflows, forms, roles & permissions, data aggregation & analytics |
-| 📈 Sheets     | Create, read, write, append, find, and export spreadsheet data                      |
-| ✅ Tasks      | Create, query, update, and complete tasks; manage task lists, subtasks, comments & reminders |
-| 📚 Wiki       | Create and manage knowledge spaces, nodes, and documents                            |
-| 👤 Contact    | Search users by name/email/phone, get user profiles                                 |
-| 📧 Mail       | Browse, search, read emails, send, reply, forward, manage drafts, watch new mail    |
-| 🎥 Meetings   | Search meeting records, query meeting minutes & recordings                          |
+| 📈 Sheets     | Create, read, write, append, find, and export spreadsheet data                                                                    |
+| 🖼️ Slides     | Create and manage presentations, read presentation content, and add or remove slides                                              |
+| ✅ Tasks      | Create, query, update, and complete tasks; manage task lists, subtasks, comments & reminders                                      |
+| 📚 Wiki       | Create and manage knowledge spaces, nodes, and documents                                                                          |
+| 👤 Contact    | Search users by name/email/phone, get user profiles                                                                               |
+| 📧 Mail       | Browse, search, read emails, send, reply, forward, manage drafts, watch new mail                                                  |
+| 🎥 Meetings   | Search meeting records, query meeting minutes artifacts and recordings                                                            |
+| 🕐 Attendance | Query personal attendance check-in records                                                                                        |
+| ✍️ Approval   | Query approval tasks, approve/reject/transfer tasks, cancel and CC instances                                                      |
+| 🎯 OKR        | Query, create, update OKRs; manage objective & key results, alignments, indicators and progress.                                  |
+| 📋 Project    | Meegle — manage work items, schedules, and data via the standalone [meegle-cli](https://github.com/larksuite/meegle-cli) (install separately) |
+| 🔗 Apps       | Develop, deploy HTML, web pages and applications                                                                                  |
 
 ## Installation & Quick Start
 
@@ -56,11 +63,7 @@ Choose **one** of the following methods:
 **Option 1 — From npm (recommended):**
 
 ```bash
-# Install CLI
-npm install -g @larksuite/cli
-
-# Install CLI SKILL (required)
-npx skills add larksuite/cli -y -g
+npx @larksuite/cli@latest install
 ```
 
 **Option 2 — From source:**
@@ -96,11 +99,7 @@ lark-cli calendar +agenda
 **Step 1 — Install**
 
 ```bash
-# Install CLI
-npm install -g @larksuite/cli
-
-# Install CLI SKILL (required)
-npx skills add larksuite/cli -y -g
+npx @larksuite/cli@latest install
 ```
 
 **Step 2 — Configure app credentials**
@@ -127,27 +126,32 @@ lark-cli auth status
 
 ## Agent Skills
 
-| Skill                           | Description                                                                           |
-| ------------------------------- | ------------------------------------------------------------------------------------- |
+| Skill                           | Description                                                                                                    |
+| ------------------------------- |----------------------------------------------------------------------------------------------------------------|
 | `lark-shared`                   | App config, auth login, identity switching, scope management, security rules (auto-loaded by all other skills) |
-| `lark-calendar`                 | Calendar events, agenda view, free/busy queries, time suggestions                     |
-| `lark-im`                       | Send/reply messages, group chat management, message search, upload/download images & files, reactions |
-| `lark-doc`                      | Create, read, update, search documents (Markdown-based)                               |
-| `lark-drive`                    | Upload, download files, manage permissions & comments                                 |
-| `lark-sheets`                   | Create, read, write, append, find, export spreadsheets                                |
-| `lark-base`                     | Tables, fields, records, views, dashboards, data aggregation & analytics              |
-| `lark-task`                     | Tasks, task lists, subtasks, reminders, member assignment                              |
-| `lark-mail`                     | Browse, search, read emails, send, reply, forward, draft management, watch new mail   |
-| `lark-contact`                  | Search users by name/email/phone, get user profiles                                   |
-| `lark-wiki`                     | Knowledge spaces, nodes, documents                                                    |
-| `lark-event`                    | Real-time event subscriptions (WebSocket), regex routing & agent-friendly format       |
-| `lark-vc`                       | Search meeting records, query meeting minutes (summary, todos, transcript)             |
-| `lark-whiteboard`               | Whiteboard/chart DSL rendering                                                        |
-| `lark-minutes`                  | Minutes metadata & AI artifacts (summary, todos, chapters)                            |
-| `lark-openapi-explorer`         | Explore underlying APIs from official docs                                            |
-| `lark-skill-maker`              | Custom skill creation framework                                                       |
-| `lark-workflow-meeting-summary` | Workflow: meeting minutes aggregation & structured report                              |
-| `lark-workflow-standup-report`  | Workflow: agenda & todo summary                                                       |
+| `lark-calendar`                 | Calendar events (create/update), agenda view, free/busy queries, time suggestions, room finding, RSVP replies  |
+| `lark-im`                       | Send/reply messages, group chat management, message search, upload/download images & files, reactions          |
+| `lark-doc`                      | Create, read, update, search documents (Markdown-based)                                                        |
+| `lark-drive`                    | Upload, download files, manage permissions & comments                                                          |
+| `lark-markdown`                 | Create, fetch, patch, and overwrite Drive-native Markdown files                                                |
+| `lark-sheets`                   | Create, read, write, append, find, export spreadsheets                                                         |
+| `lark-slides`                   | Create and manage presentations, read presentation content, and add or remove slides                          |
+| `lark-base`                     | Tables, fields, records, views, dashboards, data aggregation & analytics                                       |
+| `lark-task`                     | Tasks, task lists, subtasks, reminders, member assignment                                                      |
+| `lark-mail`                     | Browse, search, read emails, send, reply, forward, draft management, watch new mail                            |
+| `lark-contact`                  | Search users by name/email/phone, get user profiles                                                            |
+| `lark-wiki`                     | Knowledge spaces, nodes, documents                                                                             |
+| `lark-event`                    | Real-time event subscriptions (WebSocket), regex routing & agent-friendly format                               |
+| `lark-vc`                       | Search meeting records, query meeting minutes (summary, todos, transcript)                                     |
+| `lark-whiteboard`               | Whiteboard/chart DSL rendering                                                                                 |
+| `lark-minutes`                  | Minutes metadata & AI artifacts (summary, todos, chapters); upload audio/video to create minutes, download media |
+| `lark-openapi-explorer`         | Explore underlying APIs from official docs                                                                     |
+| `lark-skill-maker`              | Custom skill creation framework                                                                                |
+| `lark-attendance`               | Query personal attendance check-in records                                                                     |
+| `lark-approval`                 | Query approval tasks, approve/reject/transfer tasks, cancel and CC instances                                   |
+| `lark-workflow-meeting-summary` | Workflow: meeting minutes aggregation & structured report                                                      |
+| `lark-workflow-standup-report`  | Workflow: agenda & todo summary                                                                                |
+| `lark-okr`                      | Query, create, update OKRs; manage objective & key results, alignments and indicators.                         |
 
 ## Authentication
 
@@ -171,7 +175,7 @@ lark-cli auth login --domain calendar,task
 lark-cli auth login --recommend
 
 # Exact scope
-lark-cli auth login --scope "calendar:calendar:readonly"
+lark-cli auth login --scope "calendar:calendar:read"
 
 # Agent mode: return verification URL immediately, non-blocking
 lark-cli auth login --domain calendar --no-wait
@@ -194,7 +198,7 @@ Prefixed with `+`, designed to be friendly for both humans and AI, with smart de
 ```bash
 lark-cli calendar +agenda
 lark-cli im +messages-send --chat-id "oc_xxx" --text "Hello"
-lark-cli docs +create --title "Weekly Report" --markdown "# Progress\n- Completed feature X"
+lark-cli docs +create --api-version v2 --doc-format markdown --content $'<title>Weekly Report</title>\n# Progress\n- Completed feature X'
 ```
 
 Run `lark-cli <service> --help` to see all shortcut commands.
@@ -214,7 +218,7 @@ Call any Lark Open Platform endpoint directly, covering 2500+ APIs.
 
 ```bash
 lark-cli api GET /open-apis/calendar/v4/calendars
-lark-cli api POST /open-apis/im/v1/messages --params '{"receive_id_type":"chat_id"}' --body '{"receive_id":"oc_xxx","msg_type":"text","content":"{\"text\":\"Hello\"}"}'
+lark-cli api POST /open-apis/im/v1/messages --params '{"receive_id_type":"chat_id"}' --data '{"receive_id":"oc_xxx","msg_type":"text","content":"{\"text\":\"Hello\"}"}'
 ```
 
 ## Advanced Usage
@@ -274,6 +278,8 @@ Please fully understand all usage risks. By using this tool, you are deemed to v
 Community contributions are welcome! If you find a bug or have feature suggestions, please submit an [Issue](https://github.com/larksuite/cli/issues) or [Pull Request](https://github.com/larksuite/cli/pulls).
 
 For major changes, we recommend discussing with us first via an Issue.
+
+Before opening a PR, see [AGENTS.md](./AGENTS.md) for the local build, test, and PR checklist used by contributors and AI agents.
 
 ## License
 

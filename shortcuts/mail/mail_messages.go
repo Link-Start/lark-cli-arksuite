@@ -6,16 +6,20 @@ package mail
 import (
 	"context"
 
-	"github.com/larksuite/cli/internal/output"
 	"github.com/larksuite/cli/shortcuts/common"
 )
 
+// mailMessagesOutput is the +messages JSON output: the batch-get result,
+// plus the total count and any requested IDs the backend did not return.
 type mailMessagesOutput struct {
 	Messages              []map[string]interface{} `json:"messages"`
 	Total                 int                      `json:"total"`
 	UnavailableMessageIDs []string                 `json:"unavailable_message_ids,omitempty"`
 }
 
+// MailMessages is the `+messages` shortcut: batch-fetch full content for
+// multiple message IDs, chunking backend calls into batches of 20 while
+// preserving request order.
 var MailMessages = common.Shortcut{
 	Service:     "mail",
 	Command:     "+messages",
@@ -30,9 +34,16 @@ var MailMessages = common.Shortcut{
 		{Name: "html", Type: "bool", Default: "true", Desc: "Whether to return HTML body (false returns plain text only to save bandwidth)"},
 		{Name: "print-output-schema", Type: "bool", Desc: "Print output field reference (run this first to learn field names before parsing output)"},
 	},
+	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		if err := validateBotMailboxNotMe(runtime); err != nil {
+			return err
+		}
+		_, err := validateMessageIDs(runtime.Str("message-ids"))
+		return err
+	},
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		mailboxID := resolveMailboxID(runtime)
-		messageIDs := splitByComma(runtime.Str("message-ids"))
+		messageIDs, _ := validateMessageIDs(runtime.Str("message-ids"))
 		body := map[string]interface{}{
 			"format":      messageGetFormat(runtime.Bool("html")),
 			"message_ids": []string{"<message_id_1>", "<message_id_2>"},
@@ -52,9 +63,9 @@ var MailMessages = common.Shortcut{
 		}
 		mailboxID := resolveMailboxID(runtime)
 		hintIdentityFirst(runtime, mailboxID)
-		messageIDs := splitByComma(runtime.Str("message-ids"))
-		if len(messageIDs) == 0 {
-			return output.ErrValidation("--message-ids is required; provide one or more message IDs separated by commas")
+		messageIDs, err := validateMessageIDs(runtime.Str("message-ids"))
+		if err != nil {
+			return err
 		}
 		html := runtime.Bool("html")
 
@@ -73,6 +84,9 @@ var MailMessages = common.Shortcut{
 			Total:                 len(messages),
 			UnavailableMessageIDs: missingMessageIDs,
 		}, nil)
+		for _, msg := range rawMessages {
+			maybeHintReadReceiptRequest(runtime, mailboxID, strVal(msg["message_id"]), msg)
+		}
 		return nil
 	},
 }

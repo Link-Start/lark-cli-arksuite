@@ -129,7 +129,6 @@ func TestBaseAdvpermMetadata(t *testing.T) {
 
 func TestBaseAdvpermEnableExecute(t *testing.T) {
 	factory, stdout, reg := newExecuteFactory(t)
-	registerTokenStub(reg)
 	reg.Register(&httpmock.Stub{
 		Method: "PUT",
 		URL:    "/open-apis/base/v3/bases/app_x/advperm/enable",
@@ -150,7 +149,6 @@ func TestBaseAdvpermEnableExecute(t *testing.T) {
 
 func TestBaseAdvpermDisableExecute(t *testing.T) {
 	factory, stdout, reg := newExecuteFactory(t)
-	registerTokenStub(reg)
 	reg.Register(&httpmock.Stub{
 		Method: "PUT",
 		URL:    "/open-apis/base/v3/bases/app_x/advperm/enable",
@@ -175,7 +173,6 @@ func TestBaseAdvpermDisableExecute(t *testing.T) {
 
 func TestBaseAdvpermEnableExecuteTransportError(t *testing.T) {
 	factory, stdout, reg := newExecuteFactory(t)
-	registerTokenStub(reg)
 	reg.Register(&httpmock.Stub{
 		Method: "PUT",
 		URL:    "/open-apis/base/v3/bases/app_x/advperm/enable",
@@ -190,7 +187,6 @@ func TestBaseAdvpermEnableExecuteTransportError(t *testing.T) {
 
 func TestBaseAdvpermEnableExecuteAPIError(t *testing.T) {
 	factory, stdout, reg := newExecuteFactory(t)
-	registerTokenStub(reg)
 	reg.Register(&httpmock.Stub{
 		Method: "PUT",
 		URL:    "/open-apis/base/v3/bases/app_x/advperm/enable",
@@ -200,14 +196,11 @@ func TestBaseAdvpermEnableExecuteAPIError(t *testing.T) {
 		},
 	})
 	args := []string{"+advperm-enable", "--base-token", "app_x"}
-	if err := runShortcut(t, BaseAdvpermEnable, args, factory, stdout); err == nil || !strings.Contains(err.Error(), "190001") {
-		t.Fatalf("err=%v", err)
-	}
+	assertProblemCode(t, runShortcut(t, BaseAdvpermEnable, args, factory, stdout), 190001, "bad request")
 }
 
 func TestBaseAdvpermDisableExecuteTransportError(t *testing.T) {
 	factory, stdout, reg := newExecuteFactory(t)
-	registerTokenStub(reg)
 	reg.Register(&httpmock.Stub{
 		Method: "PUT",
 		URL:    "/open-apis/base/v3/bases/app_x/advperm/enable",
@@ -222,7 +215,6 @@ func TestBaseAdvpermDisableExecuteTransportError(t *testing.T) {
 
 func TestBaseAdvpermDisableExecuteAPIError(t *testing.T) {
 	factory, stdout, reg := newExecuteFactory(t)
-	registerTokenStub(reg)
 	reg.Register(&httpmock.Stub{
 		Method: "PUT",
 		URL:    "/open-apis/base/v3/bases/app_x/advperm/enable",
@@ -232,7 +224,5 @@ func TestBaseAdvpermDisableExecuteAPIError(t *testing.T) {
 		},
 	})
 	args := []string{"+advperm-disable", "--base-token", "app_x", "--yes"}
-	if err := runShortcut(t, BaseAdvpermDisable, args, factory, stdout); err == nil || !strings.Contains(err.Error(), "190002") {
-		t.Fatalf("err=%v", err)
-	}
+	assertProblemCode(t, runShortcut(t, BaseAdvpermDisable, args, factory, stdout), 190002, "permission denied")
 }

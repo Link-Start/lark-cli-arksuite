@@ -1,18 +1,25 @@
 // Copyright (c) 2026 Lark Technologies Pte. Ltd.
 // SPDX-License-Identifier: MIT
 
+//nolint:forbidigo // intermediate draft patch application errors; mail command layer wraps into typed ValidationError.
 package draft
 
 import (
 	"fmt"
+	"io"
 	"mime"
-	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/larksuite/cli/internal/validate"
 	"github.com/larksuite/cli/shortcuts/mail/filecheck"
 )
+
+// imgSrcRegexp matches <img ... src="value" ...> and captures the src value.
+// It handles both single and double quotes.
+var imgSrcRegexp = regexp.MustCompile(`(?i)<img\s(?:[^>]*?\s)?src\s*=\s*["']([^"']+)["']`)
 
 var protectedHeaders = map[string]bool{
 	"message-id":                true,
@@ -24,25 +31,37 @@ var protectedHeaders = map[string]bool{
 	"reply-to":                  true,
 }
 
-func Apply(snapshot *DraftSnapshot, patch Patch) error {
+// bodyChangingOps lists patch operations that modify the HTML body content,
+// which is the trigger for running local image path resolution.
+var bodyChangingOps = map[string]bool{
+	"set_body":         true,
+	"set_reply_body":   true,
+	"replace_body":     true,
+	"append_body":      true,
+	"insert_signature": true,
+	"remove_signature": true,
+}
+
+func Apply(dctx *DraftCtx, snapshot *DraftSnapshot, patch Patch) error {
 	if err := patch.Validate(); err != nil {
 		return err
 	}
+	hasBodyChange := false
 	for _, op := range patch.Ops {
-		if err := applyOp(snapshot, op, patch.Options); err != nil {
+		if err := applyOp(dctx, snapshot, op, patch.Options); err != nil {
 			return err
 		}
+		if bodyChangingOps[op.Op] {
+			hasBodyChange = true
+		}
 	}
-	if err := refreshSnapshot(snapshot); err != nil {
+	if err := postProcessInlineImages(dctx, snapshot, hasBodyChange); err != nil {
 		return err
 	}
-	if err := validateInlineCIDAfterApply(snapshot); err != nil {
-		return err
-	}
-	return validateOrphanedInlineCIDAfterApply(snapshot)
+	return refreshSnapshot(snapshot)
 }
 
-func applyOp(snapshot *DraftSnapshot, op PatchOp, options PatchOptions) error {
+func applyOp(dctx *DraftCtx, snapshot *DraftSnapshot, op PatchOp, options PatchOptions) error {
 	switch op.Op {
 	case "set_subject":
 		if strings.ContainsAny(op.Value, "\r\n") {
@@ -84,27 +103,44 @@ func applyOp(snapshot *DraftSnapshot, op PatchOp, options PatchOptions) error {
 		}
 		removeHeader(&snapshot.Headers, op.Name)
 	case "add_attachment":
-		return addAttachment(snapshot, op.Path)
+		return addAttachment(dctx, snapshot, op.Path)
 	case "remove_attachment":
-		partID, err := resolveTarget(snapshot, op.Target)
+		// Priority: part_id > cid > token. When only token is set, route to
+		// the large attachment path (updates header + HTML card, no MIME
+		// part to remove). Otherwise, resolve to a concrete part_id.
+		tgt := op.Target
+		if strings.TrimSpace(tgt.PartID) == "" && strings.TrimSpace(tgt.CID) == "" {
+			if token := strings.TrimSpace(tgt.Token); token != "" {
+				return removeLargeAttachment(snapshot, token)
+			}
+		}
+		partID, err := resolveTarget(snapshot, tgt)
 		if err != nil {
 			return fmt.Errorf("remove_attachment: %w", err)
 		}
 		return removeAttachment(snapshot, partID)
 	case "add_inline":
-		return addInline(snapshot, op.Path, op.CID, op.FileName, op.ContentType)
+		return addInline(dctx, snapshot, op.Path, op.CID, op.FileName, op.ContentType)
 	case "replace_inline":
 		partID, err := resolveTarget(snapshot, op.Target)
 		if err != nil {
 			return fmt.Errorf("replace_inline: %w", err)
 		}
-		return replaceInline(snapshot, partID, op.Path, op.CID, op.FileName, op.ContentType)
+		return replaceInline(dctx, snapshot, partID, op.Path, op.CID, op.FileName, op.ContentType)
 	case "remove_inline":
 		partID, err := resolveTarget(snapshot, op.Target)
 		if err != nil {
 			return fmt.Errorf("remove_inline: %w", err)
 		}
 		return removeInline(snapshot, partID)
+	case "insert_signature":
+		return insertSignatureOp(snapshot, op)
+	case "remove_signature":
+		return removeSignatureOp(snapshot)
+	case "set_calendar":
+		return applyCalendarSet(snapshot, op.CalendarICS)
+	case "remove_calendar":
+		return applyCalendarRemove(snapshot)
 	default:
 		return fmt.Errorf("unsupported patch op %q", op.Op)
 	}
@@ -235,7 +271,19 @@ func appendBody(snapshot *DraftSnapshot, bodyKind, value string, options PatchOp
 	return nil
 }
 
+// setBody replaces the body with value. Before replacement, it
+// automatically preserves system-managed elements (signature block and
+// large attachment card) from the old body, so body edits do not
+// accidentally delete content the user didn't author. Users can still
+// replace these elements explicitly by including their own equivalents
+// in the new value; they can delete them explicitly via the dedicated
+// ops (remove_signature, remove_attachment).
+//
+// This mirrors how normal attachments (independent MIME parts) survive
+// body edits — giving consistent mental model: attachments and signature
+// are draft-level concerns, not body content.
 func setBody(snapshot *DraftSnapshot, value string, options PatchOptions) error {
+	value = autoPreserveSystemManagedRegions(snapshot, value)
 	switch {
 	case snapshot.PrimaryTextPartID != "" && snapshot.PrimaryHTMLPartID == "":
 		return replaceBody(snapshot, "text/plain", value, options)
@@ -254,27 +302,70 @@ func setBody(snapshot *DraftSnapshot, value string, options PatchOptions) error 
 	}
 }
 
-// setReplyBody replaces only the user-authored portion of the HTML body,
-// preserving the trailing reply/forward quote block (the
-// history-quote-wrapper div generated by +reply / +forward). If no quote
-// block is found, it falls back to setBody.
+// autoPreserveSystemManagedRegions extracts system-managed elements
+// (signature block and large attachment card) from the draft's old HTML
+// body and injects them into value (before any quote block in value, or
+// appended when no quote). Order is [sig][card], matching compose-time
+// layout [user][sig][card][quote].
+//
+// For each element, auto-injection is skipped when value's
+// user-authored region (before any quote block in value) already
+// contains that element — so users who explicitly reconstruct the body
+// with their own signature / card are respected. Elements inside a
+// quote block in value belong to the quoted original message and are
+// ignored for this check.
+//
+// No-op when the draft has no HTML body, or neither element exists in
+// the old body.
+func autoPreserveSystemManagedRegions(snapshot *DraftSnapshot, value string) string {
+	htmlPart := findPart(snapshot.Body, snapshot.PrimaryHTMLPartID)
+	if htmlPart == nil {
+		return value
+	}
+	oldHTML := string(htmlPart.Body)
+
+	sig := ExtractSignatureBlock(oldHTML)
+	_, card, _ := SplitAtLargeAttachment(oldHTML)
+	if sig == "" && card == "" {
+		return value
+	}
+
+	valuePreQuote, _ := SplitAtQuote(value)
+	if sig != "" && signatureWrapperRe.MatchString(valuePreQuote) {
+		sig = ""
+	}
+	if card != "" && HTMLContainsLargeAttachment(valuePreQuote) {
+		card = ""
+	}
+	if sig == "" && card == "" {
+		return value
+	}
+
+	return InsertBeforeQuoteOrAppend(value, sig+card)
+}
+
+// setReplyBody replaces only the user-authored portion of the HTML
+// body, preserving the trailing reply/forward quote block (generated
+// by +reply / +forward). Signature and large attachment card
+// preservation is delegated to setBody, which handles them via
+// autoPreserveSystemManagedRegions. When there is no quote block, this
+// falls through to setBody with no quote to preserve.
 func setReplyBody(snapshot *DraftSnapshot, value string, options PatchOptions) error {
 	htmlPartID := snapshot.PrimaryHTMLPartID
 	if htmlPartID == "" {
-		// No HTML part — fall back to setBody which handles text-only drafts.
 		return setBody(snapshot, value, options)
 	}
 	htmlPart := findPart(snapshot.Body, htmlPartID)
 	if htmlPart == nil {
 		return setBody(snapshot, value, options)
 	}
-	_, quotePart := splitAtQuote(string(htmlPart.Body))
-	if quotePart == "" {
-		// No quote block found — fall back to regular set_body.
+	_, quote := SplitAtQuote(string(htmlPart.Body))
+	if quote == "" {
 		return setBody(snapshot, value, options)
 	}
-	// Combine the new user content with the preserved quote block.
-	return setBody(snapshot, value+quotePart, options)
+	// setBody's autoPreserve will insert the card before the quote wrapper
+	// it finds inside value (which is the quote we just appended here).
+	return setBody(snapshot, value+quote, options)
 }
 
 func tryApplyCoupledBodySetBody(snapshot *DraftSnapshot, value string) bool {
@@ -462,22 +553,23 @@ func newMultipartContainer(mediaType string) *Part {
 	}
 }
 
-func addAttachment(snapshot *DraftSnapshot, path string) error {
-	safePath, err := validate.SafeInputPath(path)
-	if err != nil {
-		return fmt.Errorf("attachment %q: %w", path, err)
-	}
+func addAttachment(dctx *DraftCtx, snapshot *DraftSnapshot, path string) error {
 	if err := checkBlockedExtension(filepath.Base(path)); err != nil {
 		return err
 	}
-	info, err := os.Stat(safePath)
+	info, err := dctx.FIO.Stat(path)
 	if err != nil {
 		return err
 	}
 	if err := checkSnapshotAttachmentLimit(snapshot, info.Size(), nil); err != nil {
 		return err
 	}
-	content, err := os.ReadFile(safePath)
+	f, err := dctx.FIO.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	content, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}
@@ -523,21 +615,26 @@ func addAttachment(snapshot *DraftSnapshot, path string) error {
 	return nil
 }
 
-func addInline(snapshot *DraftSnapshot, path, cid, fileName, contentType string) error {
-	safePath, err := validate.SafeInputPath(path)
+// loadAndAttachInline reads a local image file, validates its format,
+// creates a MIME inline part, and attaches it to the snapshot's
+// multipart/related container. If container is non-nil it is reused;
+// otherwise the container is resolved from the snapshot.
+func loadAndAttachInline(dctx *DraftCtx, snapshot *DraftSnapshot, path, cid, fileName string, container *Part) (*Part, error) {
+	info, err := dctx.FIO.Stat(path)
 	if err != nil {
-		return fmt.Errorf("inline image %q: %w", path, err)
-	}
-	info, err := os.Stat(safePath)
-	if err != nil {
-		return err
+		return nil, fmt.Errorf("inline image %q: %w", path, err)
 	}
 	if err := checkSnapshotAttachmentLimit(snapshot, info.Size(), nil); err != nil {
-		return err
+		return nil, err
 	}
-	content, err := os.ReadFile(safePath)
+	f, err := dctx.FIO.Open(path)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("inline image %q: %w", path, err)
+	}
+	defer f.Close()
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("inline image %q: %w", path, err)
 	}
 	name := fileName
 	if strings.TrimSpace(name) == "" {
@@ -545,26 +642,33 @@ func addInline(snapshot *DraftSnapshot, path, cid, fileName, contentType string)
 	}
 	detectedCT, err := filecheck.CheckInlineImageFormat(name, content)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("inline image %q: %w", path, err)
 	}
-	inline, err := newInlinePart(path, content, cid, fileName, detectedCT)
+	inline, err := newInlinePart(path, content, cid, name, detectedCT)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("inline image %q: %w", path, err)
 	}
-	containerRef := primaryBodyRootRef(&snapshot.Body)
-	if containerRef == nil || *containerRef == nil {
-		return fmt.Errorf("draft has no primary body container")
-	}
-	container, err := ensureInlineContainerRef(containerRef)
-	if err != nil {
-		return err
+	if container == nil {
+		containerRef := primaryBodyRootRef(&snapshot.Body)
+		if containerRef == nil || *containerRef == nil {
+			return nil, fmt.Errorf("draft has no primary body container")
+		}
+		container, err = ensureInlineContainerRef(containerRef)
+		if err != nil {
+			return nil, fmt.Errorf("inline image %q: %w", path, err)
+		}
 	}
 	container.Children = append(container.Children, inline)
 	container.Dirty = true
-	return nil
+	return container, nil
 }
 
-func replaceInline(snapshot *DraftSnapshot, partID, path, cid, fileName, contentType string) error {
+func addInline(dctx *DraftCtx, snapshot *DraftSnapshot, path, cid, fileName, contentType string) error {
+	_, err := loadAndAttachInline(dctx, snapshot, path, cid, fileName, nil)
+	return err
+}
+
+func replaceInline(dctx *DraftCtx, snapshot *DraftSnapshot, partID, path, cid, fileName, contentType string) error {
 	part := findPart(snapshot.Body, partID)
 	if part == nil {
 		return fmt.Errorf("inline part %q not found", partID)
@@ -572,18 +676,19 @@ func replaceInline(snapshot *DraftSnapshot, partID, path, cid, fileName, content
 	if !isInlinePart(part) {
 		return fmt.Errorf("part %q is not an inline MIME part", partID)
 	}
-	safePath, err := validate.SafeInputPath(path)
-	if err != nil {
-		return fmt.Errorf("inline image %q: %w", path, err)
-	}
-	info, err := os.Stat(safePath)
+	info, err := dctx.FIO.Stat(path)
 	if err != nil {
 		return err
 	}
 	if err := checkSnapshotAttachmentLimit(snapshot, info.Size(), part); err != nil {
 		return err
 	}
-	content, err := os.ReadFile(safePath)
+	f, err := dctx.FIO.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	content, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}
@@ -605,8 +710,8 @@ func replaceInline(snapshot *DraftSnapshot, partID, path, cid, fileName, content
 	}
 	contentType = detectedCT
 	contentType, mediaParams := normalizedDetectedMediaType(contentType)
-	finalCID := strings.Trim(strings.TrimSpace(cid), "<>")
-	if err := validate.RejectCRLF(finalCID, "inline cid"); err != nil {
+	finalCID := normalizeCID(cid)
+	if err := validateCID(finalCID); err != nil {
 		return err
 	}
 	if err := validate.RejectCRLF(fileName, "inline filename"); err != nil {
@@ -731,6 +836,33 @@ func findPart(root *Part, partID string) *Part {
 	return nil
 }
 
+// normalizeCID strips a single RFC 2392 angle-bracket wrapper (<...>) from the
+// CID if present, and trims surrounding whitespace.  Unlike strings.Trim, it
+// only removes a matched pair so that stray brackets like "test<>" are preserved
+// for validation to reject.
+func normalizeCID(cid string) string {
+	cid = strings.TrimSpace(cid)
+	if strings.HasPrefix(cid, "<") && strings.HasSuffix(cid, ">") {
+		cid = cid[1 : len(cid)-1]
+	}
+	return cid
+}
+
+// validateCID checks that a Content-ID value is non-empty and free of
+// characters that would break MIME headers or cause ambiguous references.
+func validateCID(cid string) error {
+	if cid == "" {
+		return fmt.Errorf("inline cid is empty")
+	}
+	if err := validate.RejectCRLF(cid, "inline cid"); err != nil {
+		return err
+	}
+	if strings.ContainsAny(cid, " \t<>()") {
+		return fmt.Errorf("inline cid %q contains invalid characters (spaces, tabs, angle brackets, or parentheses are not allowed)", cid)
+	}
+	return nil
+}
+
 func ensureInlineContainerRef(partRef **Part) (*Part, error) {
 	if partRef == nil || *partRef == nil {
 		return nil, fmt.Errorf("body container is nil")
@@ -755,11 +887,8 @@ func newInlinePart(path string, content []byte, cid, fileName, contentType strin
 	}
 	contentType, mediaParams := normalizedDetectedMediaType(contentType)
 	mediaParams["name"] = fileName
-	cid = strings.Trim(strings.TrimSpace(cid), "<>")
-	if cid == "" {
-		return nil, fmt.Errorf("inline cid is empty")
-	}
-	if err := validate.RejectCRLF(cid, "inline cid"); err != nil {
+	cid = normalizeCID(cid)
+	if err := validateCID(cid); err != nil {
 		return nil, err
 	}
 	if err := validate.RejectCRLF(fileName, "inline filename"); err != nil {
@@ -857,59 +986,390 @@ func removeHeader(headers *[]Header, name string) {
 	*headers = next
 }
 
-// validateInlineCIDAfterApply checks that all CID references in the HTML body
-// resolve to actual inline MIME parts. This is called after Apply (editing) to
-// prevent broken CID references, but NOT during Parse (where broken CIDs
-// should not block opening the draft).
-func validateInlineCIDAfterApply(snapshot *DraftSnapshot) error {
-	htmlPart := findPart(snapshot.Body, snapshot.PrimaryHTMLPartID)
-	if htmlPart == nil {
-		return nil
+// uriSchemeRegexp matches a URI scheme (RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":").
+var uriSchemeRegexp = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.\-]*:`)
+
+// isLocalFileSrc returns true if src is a local file path.
+// Any URI with a scheme (http:, cid:, data:, ftp:, blob:, file:, etc.)
+// or protocol-relative URL (//host/...) is rejected.
+func isLocalFileSrc(src string) bool {
+	trimmed := strings.TrimSpace(src)
+	if trimmed == "" {
+		return false
 	}
-	refs := extractCIDRefs(string(htmlPart.Body))
+	if strings.HasPrefix(trimmed, "//") {
+		return false
+	}
+	return !uriSchemeRegexp.MatchString(trimmed)
+}
+
+// generateCID returns a random UUID string suitable for use as a Content-ID.
+// UUIDs contain only [0-9a-f-], which is inherently RFC-safe and unique,
+// avoiding all filename-derived encoding/collision issues.
+func generateCID() (string, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate CID: %w", err)
+	}
+	return id.String(), nil
+}
+
+// LocalImageRef represents a local image found in an HTML body that needs
+// to be embedded as an inline MIME part.
+type LocalImageRef struct {
+	FilePath string // original src value from the HTML
+	CID      string // generated Content-ID
+}
+
+// ResolveLocalImagePaths scans HTML for <img src="local/path"> references,
+// validates each path, generates CIDs, and returns the modified HTML with
+// cid: URIs plus the list of local image references to embed as inline parts.
+// This function handles only the HTML transformation; callers are responsible
+// for embedding the actual file data (e.g., via emlbuilder.AddFileInline).
+func ResolveLocalImagePaths(html string) (string, []LocalImageRef, error) {
+	matches := imgSrcRegexp.FindAllStringSubmatchIndex(html, -1)
+	if len(matches) == 0 {
+		return html, nil, nil
+	}
+
+	// Cache resolved paths so the same file is only attached once.
+	pathToCID := make(map[string]string)
+	var refs []LocalImageRef
+
+	// Iterate in reverse so that index offsets remain valid after replacement.
+	for i := len(matches) - 1; i >= 0; i-- {
+		srcStart, srcEnd := matches[i][2], matches[i][3]
+		src := html[srcStart:srcEnd]
+		if !isLocalFileSrc(src) {
+			continue
+		}
+
+		resolvedPath, err := validate.SafeInputPath(src)
+		if err != nil {
+			return "", nil, fmt.Errorf("inline image %q: %w", src, err)
+		}
+
+		cid, ok := pathToCID[resolvedPath]
+		if !ok {
+			cid, err = generateCID()
+			if err != nil {
+				return "", nil, err
+			}
+			pathToCID[resolvedPath] = cid
+			refs = append(refs, LocalImageRef{FilePath: src, CID: cid})
+		}
+
+		html = html[:srcStart] + "cid:" + cid + html[srcEnd:]
+	}
+
+	return html, refs, nil
+}
+
+// resolveLocalImgSrc scans HTML for <img src="local/path"> references,
+// creates MIME inline parts for each local file, and returns the HTML
+// with those src attributes replaced by cid: URIs.
+func resolveLocalImgSrc(dctx *DraftCtx, snapshot *DraftSnapshot, html string) (string, error) {
+	resolved, refs, err := ResolveLocalImagePaths(html)
+	if err != nil {
+		return "", err
+	}
+
+	var container *Part
+	for _, ref := range refs {
+		fileName := filepath.Base(ref.FilePath)
+		container, err = loadAndAttachInline(dctx, snapshot, ref.FilePath, ref.CID, fileName, container)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return resolved, nil
+}
+
+// removeOrphanedInlineParts removes inline MIME parts whose ContentID
+// is not in the referencedCIDs set. It searches multipart/related and
+// multipart/mixed containers, because some servers flatten the MIME tree
+// and place inline parts directly under multipart/mixed.
+func removeOrphanedInlineParts(root *Part, referencedCIDs map[string]bool) {
+	if root == nil {
+		return
+	}
+	isRelated := strings.EqualFold(root.MediaType, "multipart/related")
+	isMixed := strings.EqualFold(root.MediaType, "multipart/mixed")
+	if !isRelated && !isMixed {
+		for _, child := range root.Children {
+			removeOrphanedInlineParts(child, referencedCIDs)
+		}
+		return
+	}
+	kept := make([]*Part, 0, len(root.Children))
+	for _, child := range root.Children {
+		if child == nil {
+			continue
+		}
+		if strings.EqualFold(child.ContentDisposition, "inline") && child.ContentID != "" {
+			if !referencedCIDs[strings.ToLower(child.ContentID)] {
+				root.Dirty = true
+				continue
+			}
+		}
+		kept = append(kept, child)
+	}
+	root.Children = kept
+	for _, child := range root.Children {
+		removeOrphanedInlineParts(child, referencedCIDs)
+	}
+}
+
+// ValidateCIDReferences checks that every cid: reference in the HTML body has
+// a matching entry in availableCIDs. Returns an error for the first missing CID.
+// Both sides are compared case-insensitively.
+func ValidateCIDReferences(html string, availableCIDs []string) error {
+	refs := extractCIDRefs(html)
 	if len(refs) == 0 {
 		return nil
 	}
-	cids := make(map[string]bool)
-	for _, part := range flattenParts(snapshot.Body) {
-		if part == nil || part.ContentID == "" {
-			continue
-		}
-		cids[strings.ToLower(part.ContentID)] = true
+	cidSet := make(map[string]bool, len(availableCIDs))
+	for _, cid := range availableCIDs {
+		cidSet[strings.ToLower(cid)] = true
 	}
 	for _, ref := range refs {
-		if !cids[strings.ToLower(ref)] {
+		if !cidSet[strings.ToLower(ref)] {
 			return fmt.Errorf("html body references missing inline cid %q", ref)
 		}
 	}
 	return nil
 }
 
-// validateOrphanedInlineCIDAfterApply checks the reverse direction: every
-// inline MIME part with a ContentID must be referenced by the HTML body.
-// An orphaned inline part (CID exists but HTML has no <img src="cid:...">) will
-// be displayed as an unexpected attachment by most mail clients.
-func validateOrphanedInlineCIDAfterApply(snapshot *DraftSnapshot) error {
-	htmlPart := findPart(snapshot.Body, snapshot.PrimaryHTMLPartID)
-	if htmlPart == nil {
-		return nil
-	}
-	refs := extractCIDRefs(string(htmlPart.Body))
+// FindOrphanedCIDs returns CIDs from addedCIDs that are not referenced in the
+// HTML body via <img src="cid:...">. These would appear as unexpected
+// attachments when the email is sent.
+func FindOrphanedCIDs(html string, addedCIDs []string) []string {
+	refs := extractCIDRefs(html)
 	refSet := make(map[string]bool, len(refs))
 	for _, ref := range refs {
 		refSet[strings.ToLower(ref)] = true
 	}
 	var orphaned []string
+	for _, cid := range addedCIDs {
+		if !refSet[strings.ToLower(cid)] {
+			orphaned = append(orphaned, cid)
+		}
+	}
+	return orphaned
+}
+
+// postProcessInlineImages is the unified post-processing step that:
+//  1. Resolves local <img src="./path"> to inline CID parts (only when resolveLocal is true).
+//  2. Validates all CID references in HTML resolve to MIME parts.
+//  3. Removes orphaned inline MIME parts no longer referenced by HTML.
+//
+// resolveLocal should be true only when a body-changing op was applied;
+// metadata-only edits skip local path resolution to avoid disk I/O side effects.
+//
+// NOTE: The EML builder path has an equivalent function processInlineImagesForEML
+// in shortcuts/mail/helpers.go. When adding new validation or processing logic here,
+// update processInlineImagesForEML as well (or extract a shared function).
+func postProcessInlineImages(dctx *DraftCtx, snapshot *DraftSnapshot, resolveLocal bool) error {
+	htmlPart := findPrimaryBodyPart(snapshot.Body, "text/html")
+	if htmlPart == nil {
+		return nil
+	}
+
+	origHTML := string(htmlPart.Body)
+	html := origHTML
+	if resolveLocal {
+		var err error
+		html, err = resolveLocalImgSrc(dctx, snapshot, origHTML)
+		if err != nil {
+			return err
+		}
+		if html != origHTML {
+			htmlPart.Body = []byte(html)
+			htmlPart.Dirty = true
+		}
+	}
+
+	// Collect all CIDs present as MIME parts.
+	var cidParts []string
 	for _, part := range flattenParts(snapshot.Body) {
-		if part == nil || part.ContentID == "" {
+		if part != nil && part.ContentID != "" {
+			cidParts = append(cidParts, part.ContentID)
+		}
+	}
+
+	if err := ValidateCIDReferences(html, cidParts); err != nil {
+		return err
+	}
+
+	refs := extractCIDRefs(html)
+	refSet := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		refSet[strings.ToLower(ref)] = true
+	}
+	removeOrphanedInlineParts(snapshot.Body, refSet)
+	return nil
+}
+
+// ── Signature patch operations ──
+
+// insertSignatureOp inserts a pre-rendered signature into the HTML body.
+// The RenderedSignatureHTML and SignatureImages fields must be populated
+// by the shortcut layer before calling Apply.
+//
+// Placement: signature goes between the user-authored region and any
+// system-managed tail (large attachment card or history quote wrapper),
+// matching the compose-time order [user][sig][card?][quote?]. When the
+// draft already has a signature, it is replaced in place.
+func insertSignatureOp(snapshot *DraftSnapshot, op PatchOp) error {
+	htmlPart := findPart(snapshot.Body, snapshot.PrimaryHTMLPartID)
+	if htmlPart == nil {
+		return fmt.Errorf("insert_signature: no HTML body part found; use set_body first")
+	}
+	oldHTML := string(htmlPart.Body)
+
+	// Collect CIDs from old signature before replacement so we can prune
+	// MIME inline parts that the new signature doesn't re-reference.
+	oldSigCIDs := collectSignatureCIDsFromHTML(oldHTML)
+
+	sigBlock := SignatureSpacing() + BuildSignatureHTML(op.SignatureID, op.RenderedSignatureHTML)
+	newHTML := PlaceSignatureBeforeSystemTail(oldHTML, sigBlock)
+
+	// Remove orphaned MIME inline parts from old signature.
+	for _, cid := range oldSigCIDs {
+		if !containsCIDIgnoreCase(newHTML, cid) {
+			removeMIMEPartByCID(snapshot.Body, cid)
+		}
+	}
+
+	htmlPart.Body = []byte(newHTML)
+	htmlPart.Dirty = true
+
+	// Add new signature inline images to the MIME tree.
+	for _, img := range op.SignatureImages {
+		addInlinePartToSnapshot(snapshot, img.Data, img.ContentType, img.FileName, img.CID)
+	}
+
+	syncTextPartFromHTML(snapshot, newHTML)
+	return nil
+}
+
+// removeSignatureOp removes the signature block from the HTML body.
+func removeSignatureOp(snapshot *DraftSnapshot) error {
+	htmlPart := findPart(snapshot.Body, snapshot.PrimaryHTMLPartID)
+	if htmlPart == nil {
+		return fmt.Errorf("remove_signature: no HTML body part found")
+	}
+	html := string(htmlPart.Body)
+
+	if !signatureWrapperRe.MatchString(html) {
+		return fmt.Errorf("no signature found in draft body")
+	}
+
+	// Collect CIDs referenced by the signature before removing it.
+	sigCIDs := collectSignatureCIDsFromHTML(html)
+
+	// Remove signature and preceding spacing.
+	html = RemoveSignatureHTML(html)
+
+	// Remove orphaned inline parts (only if the CID is no longer referenced in remaining HTML).
+	for _, cid := range sigCIDs {
+		if !containsCIDIgnoreCase(html, cid) {
+			removeMIMEPartByCID(snapshot.Body, cid)
+		}
+	}
+
+	htmlPart.Body = []byte(html)
+	htmlPart.Dirty = true
+
+	syncTextPartFromHTML(snapshot, html)
+	return nil
+}
+
+// syncTextPartFromHTML regenerates the text/plain part from the current HTML,
+// mirroring the coupled-body logic in tryApplyCoupledBodySetBody.
+func syncTextPartFromHTML(snapshot *DraftSnapshot, html string) {
+	if snapshot.PrimaryTextPartID == "" {
+		return
+	}
+	textPart := findPart(snapshot.Body, snapshot.PrimaryTextPartID)
+	if textPart == nil {
+		return
+	}
+	textPart.Body = []byte(plainTextFromHTML(html))
+	textPart.Dirty = true
+}
+
+// Note: SignatureSpacing, BuildSignatureHTML, FindMatchingCloseDiv, and
+// RemoveSignatureHTML are exported from projection.go to avoid duplication
+// with the mail package's signature_html.go.
+
+// collectSignatureCIDsFromHTML extracts CID references from the signature block in HTML.
+func collectSignatureCIDsFromHTML(html string) []string {
+	loc := signatureWrapperRe.FindStringIndex(html)
+	if loc == nil {
+		return nil
+	}
+	sigEnd := FindMatchingCloseDiv(html, loc[0])
+	sigHTML := html[loc[0]:sigEnd]
+
+	matches := cidRefRegexp.FindAllStringSubmatch(sigHTML, -1)
+	cids := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if len(m) >= 2 {
+			cids = append(cids, m[1])
+		}
+	}
+	return cids
+}
+
+// removeMIMEPartByCID removes the first MIME part with the given Content-ID.
+func removeMIMEPartByCID(root *Part, cid string) {
+	if root == nil {
+		return
+	}
+	normalizedCID := strings.Trim(cid, "<>")
+	for i, child := range root.Children {
+		if child == nil {
 			continue
 		}
-		if !refSet[strings.ToLower(part.ContentID)] {
-			orphaned = append(orphaned, part.ContentID)
+		childCID := strings.Trim(child.ContentID, "<>")
+		if strings.EqualFold(childCID, normalizedCID) {
+			root.Children = append(root.Children[:i], root.Children[i+1:]...)
+			return
 		}
+		removeMIMEPartByCID(child, cid)
 	}
-	if len(orphaned) > 0 {
-		return fmt.Errorf("inline MIME parts have no <img> reference in the HTML body and will appear as unexpected attachments: orphaned cids %v; if you used set_body, make sure the new body preserves all existing cid:... references", orphaned)
+}
+
+// addInlinePartToSnapshot adds an inline image part to the MIME tree.
+func addInlinePartToSnapshot(snapshot *DraftSnapshot, data []byte, contentType, filename, cid string) {
+	part := &Part{
+		MediaType:          contentType,
+		ContentDisposition: "inline",
+		ContentID:          strings.Trim(cid, "<>"),
+		Body:               data,
+		Dirty:              true,
 	}
-	return nil
+	if filename != "" {
+		part.MediaParams = map[string]string{"name": filename}
+	}
+	// Find or create the multipart/related container.
+	if snapshot.Body == nil {
+		return
+	}
+	if snapshot.Body.IsMultipart() {
+		snapshot.Body.Children = append(snapshot.Body.Children, part)
+	}
+	// Non-multipart body: inline part is not added. This is expected when
+	// the draft has a simple text/html body without multipart/related wrapper.
+	// The signature HTML still references the CID, but the image won't render.
+	// In practice, compose shortcuts wrap the body in multipart/related when
+	// inline images are present, so this path rarely triggers.
+}
+
+// containsCIDIgnoreCase checks if html contains a "cid:<value>" reference,
+// case-insensitively. Aligned with other CID comparisons in this package.
+func containsCIDIgnoreCase(html, cid string) bool {
+	return strings.Contains(strings.ToLower(html), "cid:"+strings.ToLower(cid))
 }

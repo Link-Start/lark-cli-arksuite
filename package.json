@@ -1,6 +1,6 @@
 {
   "name": "@larksuite/cli",
-  "version": "1.0.1",
+  "version": "1.0.48",
   "description": "The official CLI for Lark/Feishu open platform",
   "bin": {
     "lark-cli": "scripts/run.js"
@@ -27,7 +27,12 @@
   "license": "MIT",
   "files": [
     "scripts/install.js",
+    "scripts/install-wizard.js",
     "scripts/run.js",
+    "checksums.txt",
     "CHANGELOG.md"
-  ]
+  ],
+  "dependencies": {
+    "@clack/prompts": "^1.2.0"
+  }
 }

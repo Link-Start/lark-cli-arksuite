@@ -5,11 +5,12 @@ package mail
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/larksuite/cli/shortcuts/common"
 )
 
+// MailMessage is the `+message` shortcut: fetch full content of a single
+// email by message ID (normalized body + attachments / inline metadata).
 var MailMessage = common.Shortcut{
 	Service:     "mail",
 	Command:     "+message",
@@ -23,6 +24,9 @@ var MailMessage = common.Shortcut{
 		{Name: "message-id", Desc: "Required. Email message ID", Required: true},
 		{Name: "html", Type: "bool", Default: "true", Desc: "Whether to return HTML body (false returns plain text only to save bandwidth)"},
 		{Name: "print-output-schema", Type: "bool", Desc: "Print output field reference (run this first to learn field names before parsing output)"},
+	},
+	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		return validateBotMailboxNotMe(runtime)
 	},
 	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 		mailboxID := resolveMailboxID(runtime)
@@ -43,11 +47,12 @@ var MailMessage = common.Shortcut{
 
 		msg, err := fetchFullMessage(runtime, mailboxID, messageID, html)
 		if err != nil {
-			return fmt.Errorf("failed to fetch email: %w", err)
+			return mailDecorateProblemMessage(err, "failed to fetch email")
 		}
 
 		out := buildMessageOutput(msg, html)
 		runtime.Out(out, nil)
+		maybeHintReadReceiptRequest(runtime, mailboxID, messageID, msg)
 		return nil
 	},
 }

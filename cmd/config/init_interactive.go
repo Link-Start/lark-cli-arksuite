@@ -6,16 +6,17 @@ package config
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/charmbracelet/huh"
 	"github.com/larksuite/cli/internal/build"
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/larksuite/cli/errs"
 	larkauth "github.com/larksuite/cli/internal/auth"
 	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/internal/core"
 	"github.com/larksuite/cli/internal/output"
+	"github.com/larksuite/cli/internal/transport"
 )
 
 // configInitResult holds the result of the interactive config init flow.
@@ -61,8 +62,8 @@ func runExistingAppForm(f *cmdutil.Factory, msg *initMsg) (*configInitResult, er
 	// Load existing config for defaults
 	existing, _ := core.LoadMultiAppConfig()
 	var firstApp *core.AppConfig
-	if existing != nil && len(existing.Apps) > 0 {
-		firstApp = &existing.Apps[0]
+	if existing != nil {
+		firstApp = existing.CurrentAppConfig("")
 	}
 
 	var appID, appSecret, brand string
@@ -125,8 +126,16 @@ func runExistingAppForm(f *cmdutil.Factory, msg *initMsg) (*configInitResult, er
 		}, nil
 	}
 
-	if appID == "" || appSecret == "" {
-		return nil, output.ErrValidation("App ID and App Secret cannot be empty")
+	switch {
+	case appID == "" && appSecret == "":
+		return nil, errs.NewValidationError(errs.SubtypeInvalidArgument, "App ID and App Secret cannot be empty").
+			WithParam("--app-id")
+	case appID == "":
+		return nil, errs.NewValidationError(errs.SubtypeInvalidArgument, "App ID cannot be empty").
+			WithParam("--app-id")
+	case appSecret == "":
+		return nil, errs.NewValidationError(errs.SubtypeInvalidArgument, "App Secret cannot be empty").
+			WithParam("--app-secret")
 	}
 
 	return &configInitResult{
@@ -168,29 +177,40 @@ func runCreateAppFlow(ctx context.Context, f *cmdutil.Factory, brandOverride cor
 	}
 
 	// Step 1: Request app registration (begin)
-	httpClient := &http.Client{}
+	// Use the shared proxy-plugin-aware transport so registration traffic is not
+	// a bypass of proxy plugin mode.
+	httpClient := transport.NewHTTPClient(0)
 	authResp, err := larkauth.RequestAppRegistration(httpClient, larkBrand, f.IOStreams.ErrOut)
 	if err != nil {
-		return nil, output.ErrAuth("app registration failed: %v", err)
+		return nil, errs.NewConfigError(errs.SubtypeInvalidClient, "app registration failed: %v", err).WithCause(err)
 	}
 
 	// Step 2: Build and display verification URL + QR code
 	verificationURL := larkauth.BuildVerificationURL(authResp.VerificationUriComplete, build.Version)
 
-	// Show QR code in terminal
-	qr, qrErr := qrcode.New(verificationURL, qrcode.Medium)
-	if qrErr == nil {
-		fmt.Fprint(f.IOStreams.ErrOut, qr.ToSmallString(false))
+	// Branch on TTY: human-friendly copy in interactive terminals,
+	// preserve original copy for AI / non-interactive callers.
+	if f.IOStreams.IsTerminal {
+		fmt.Fprintf(f.IOStreams.ErrOut, "%s", msg.ScanQRCode)
+		qr, qrErr := qrcode.New(verificationURL, qrcode.Medium)
+		if qrErr == nil {
+			fmt.Fprint(f.IOStreams.ErrOut, qr.ToSmallString(false))
+		}
+		fmt.Fprintf(f.IOStreams.ErrOut, "%s", msg.ScanOrOpenLink)
+		fmt.Fprintf(f.IOStreams.ErrOut, "  %s\n\n", verificationURL)
+		fmt.Fprintf(f.IOStreams.ErrOut, "%s\n", msg.WaitingForScan)
+	} else {
+		qr, qrErr := qrcode.New(verificationURL, qrcode.Medium)
+		if qrErr == nil {
+			fmt.Fprint(f.IOStreams.ErrOut, qr.ToSmallString(false))
+		}
+		fmt.Fprintf(f.IOStreams.ErrOut, "%s", msg.OpenLinkNonTTY)
+		fmt.Fprintf(f.IOStreams.ErrOut, "  %s\n\n", verificationURL)
+		fmt.Fprintf(f.IOStreams.ErrOut, "%s\n", msg.WaitingForScanNonTTY)
 	}
-
-	fmt.Fprintf(f.IOStreams.ErrOut, "%s", msg.ScanOrOpenLink)
-	fmt.Fprintf(f.IOStreams.ErrOut, "  %s\n\n", verificationURL)
-
-	// Step 3: Poll for result
-	fmt.Fprintf(f.IOStreams.ErrOut, "%s\n", msg.WaitingForScan)
 	result, err := larkauth.PollAppRegistration(ctx, httpClient, core.BrandFeishu, authResp.DeviceCode, authResp.Interval, authResp.ExpiresIn, f.IOStreams.ErrOut)
 	if err != nil {
-		return nil, output.ErrAuth("%v", err)
+		return nil, errs.NewAuthenticationError(errs.SubtypeUnknown, "%v", err).WithCause(err)
 	}
 
 	// Step 4: Handle Lark brand special case
@@ -199,12 +219,12 @@ func runCreateAppFlow(ctx context.Context, f *cmdutil.Factory, brandOverride cor
 		// fmt.Fprintf(f.IOStreams.ErrOut, "%s\n", msg.DetectedLarkTenant)
 		result, err = larkauth.PollAppRegistration(ctx, httpClient, core.BrandLark, authResp.DeviceCode, authResp.Interval, authResp.ExpiresIn, f.IOStreams.ErrOut)
 		if err != nil {
-			return nil, output.ErrAuth("lark endpoint retry failed: %v", err)
+			return nil, errs.NewNetworkError(errs.SubtypeNetworkTransport, "lark endpoint retry failed: %v", err).WithCause(err)
 		}
 	}
 
 	if result.ClientID == "" || result.ClientSecret == "" {
-		return nil, output.ErrAuth("app registration succeeded but missing client_id or client_secret")
+		return nil, errs.NewConfigError(errs.SubtypeInvalidClient, "app registration succeeded but missing client_id or client_secret")
 	}
 
 	// Determine final brand from response

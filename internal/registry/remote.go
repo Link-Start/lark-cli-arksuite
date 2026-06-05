@@ -17,7 +17,9 @@ import (
 
 	"github.com/larksuite/cli/internal/build"
 	"github.com/larksuite/cli/internal/core"
+	"github.com/larksuite/cli/internal/transport"
 	"github.com/larksuite/cli/internal/validate"
+	"github.com/larksuite/cli/internal/vfs"
 )
 
 const (
@@ -109,14 +111,14 @@ func cacheMetaPath() string {
 // Returns false if the directory cannot be created or written to.
 func cacheWritable() bool {
 	dir := cacheDir()
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := vfs.MkdirAll(dir, 0700); err != nil {
 		return false
 	}
 	probe := filepath.Join(dir, ".probe")
-	if err := os.WriteFile(probe, []byte{}, 0644); err != nil {
+	if err := vfs.WriteFile(probe, []byte{}, 0644); err != nil {
 		return false
 	}
-	os.Remove(probe)
+	vfs.Remove(probe)
 	return true
 }
 
@@ -124,7 +126,7 @@ func cacheWritable() bool {
 
 func loadCacheMeta() (CacheMeta, error) {
 	var meta CacheMeta
-	data, err := os.ReadFile(cacheMetaPath())
+	data, err := vfs.ReadFile(cacheMetaPath())
 	if err != nil {
 		return meta, err
 	}
@@ -135,7 +137,7 @@ func loadCacheMeta() (CacheMeta, error) {
 }
 
 func saveCacheMeta(meta CacheMeta) error {
-	if err := os.MkdirAll(cacheDir(), 0700); err != nil {
+	if err := vfs.MkdirAll(cacheDir(), 0700); err != nil {
 		return err
 	}
 	data, err := json.Marshal(meta)
@@ -147,22 +149,22 @@ func saveCacheMeta(meta CacheMeta) error {
 
 func loadCachedMerged() (*MergedRegistry, error) {
 	path := cachePath()
-	data, err := os.ReadFile(path)
+	data, err := vfs.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	var reg MergedRegistry
 	if err := json.Unmarshal(data, &reg); err != nil {
 		// Cache corrupted — remove it so next run triggers a fresh fetch
-		os.Remove(path)
-		os.Remove(cacheMetaPath())
+		vfs.Remove(path)
+		vfs.Remove(cacheMetaPath())
 		return nil, err
 	}
 	return &reg, nil
 }
 
 func saveCachedMerged(data []byte, meta CacheMeta) error {
-	if err := os.MkdirAll(cacheDir(), 0700); err != nil {
+	if err := vfs.MkdirAll(cacheDir(), 0700); err != nil {
 		return err
 	}
 	if err := validate.AtomicWrite(cachePath(), data, 0644); err != nil {
@@ -177,7 +179,9 @@ func saveCachedMerged(data []byte, meta CacheMeta) error {
 // localVersion is sent as data_version query param for server-side version comparison.
 // Returns (data, reg, err). A nil reg means the version is unchanged (not modified).
 func fetchRemoteMerged(localVersion string) (data []byte, reg *MergedRegistry, err error) {
-	client := &http.Client{Timeout: fetchTimeout}
+	// Route through the shared proxy-plugin-aware transport so remote API
+	// definition fetches honor proxy plugin mode instead of bypassing it.
+	client := transport.NewHTTPClient(fetchTimeout)
 	req, err := http.NewRequest("GET", remoteMetaURL(localVersion), nil)
 	if err != nil {
 		return nil, nil, err
@@ -254,11 +258,18 @@ func doSyncFetch() {
 
 // --- background refresh ---
 
-var refreshOnce sync.Once
+var (
+	refreshOnce       sync.Once
+	bgRefreshInFlight sync.WaitGroup // tracks doBackgroundRefresh goroutines for test teardown (resetInit)
+)
 
 func triggerBackgroundRefresh() {
 	refreshOnce.Do(func() {
-		go doBackgroundRefresh()
+		bgRefreshInFlight.Add(1)
+		go func() {
+			defer bgRefreshInFlight.Done()
+			doBackgroundRefresh()
+		}()
 	})
 }
 

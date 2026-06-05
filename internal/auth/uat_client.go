@@ -18,11 +18,15 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/internal/core"
+	"github.com/larksuite/cli/internal/errclass"
+	"github.com/larksuite/cli/internal/vfs"
 )
 
 var safeIDChars = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
+// sanitizeID replaces empty IDs with "default" to prevent file path issues.
 func sanitizeID(id string) string {
 	return safeIDChars.ReplaceAllString(id, "_")
 }
@@ -98,6 +102,7 @@ func GetValidAccessToken(httpClient *http.Client, opts UATCallOptions) (string, 
 	return "", &NeedAuthorizationError{UserOpenId: opts.UserOpenId}
 }
 
+// refreshWithLock acquires a file lock before attempting to refresh the token.
 func refreshWithLock(httpClient *http.Client, opts UATCallOptions, stored *StoredUAToken) (*StoredUAToken, error) {
 	key := fmt.Sprintf("%s:%s", opts.AppId, opts.UserOpenId)
 
@@ -126,7 +131,7 @@ func refreshWithLock(httpClient *http.Client, opts UATCallOptions, stored *Store
 	configDir := core.GetConfigDir()
 
 	lockDir := filepath.Join(configDir, "locks")
-	if err := os.MkdirAll(lockDir, 0700); err != nil {
+	if err := vfs.MkdirAll(lockDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create lock directory: %w", err)
 	}
 
@@ -165,6 +170,7 @@ func refreshWithLock(httpClient *http.Client, opts UATCallOptions, stored *Store
 	return doRefreshToken(httpClient, opts, stored)
 }
 
+// doRefreshToken performs the actual HTTP request to refresh the token.
 func doRefreshToken(httpClient *http.Client, opts UATCallOptions, stored *StoredUAToken) (*StoredUAToken, error) {
 	errOut := opts.ErrOut
 	if errOut == nil {
@@ -200,6 +206,7 @@ func doRefreshToken(httpClient *http.Client, opts UATCallOptions, stored *Stored
 			return nil, err
 		}
 		defer resp.Body.Close()
+		logHTTPResponse(resp)
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -207,7 +214,7 @@ func doRefreshToken(httpClient *http.Client, opts UATCallOptions, stored *Stored
 		}
 		var data map[string]interface{}
 		if err := json.Unmarshal(body, &data); err != nil {
-			return nil, fmt.Errorf("token refresh parse error: %v", err)
+			return nil, fmt.Errorf("token refresh parse error: %w", err)
 		}
 		return data, nil
 	}
@@ -218,16 +225,21 @@ func doRefreshToken(httpClient *http.Client, opts UATCallOptions, stored *Stored
 	}
 
 	code := getInt(data, "code", -1)
-	if code == LarkErrBlockByPolicy || code == LarkErrBlockByPolicyTryAuth {
+	meta, metaOK := errclass.LookupCodeMeta(code)
+	if metaOK && meta.Category == errs.CategoryPolicy {
 		challengeUrl := getStr(data, "challenge_url")
 		cliHint := getStr(data, "cli_hint")
 		msg := getStr(data, "error_description")
 
-		return nil, &SecurityPolicyError{
-			Code:         code,
-			Message:      msg,
+		return nil, &errs.SecurityPolicyError{
+			Problem: errs.Problem{
+				Category: errs.CategoryPolicy,
+				Subtype:  meta.Subtype,
+				Code:     code,
+				Message:  msg,
+				Hint:     cliHint,
+			},
 			ChallengeURL: challengeUrl,
-			CLIHint:      cliHint,
 		}
 	}
 
@@ -235,7 +247,7 @@ func doRefreshToken(httpClient *http.Client, opts UATCallOptions, stored *Stored
 
 	if (code != -1 && code != 0) || errStr != "" {
 		// Retryable server error: retry once, then clear token on second failure.
-		if RefreshTokenRetryable[code] {
+		if metaOK && meta.Category == errs.CategoryAuthentication && meta.Retryable {
 			fmt.Fprintf(errOut, "[lark-cli] [WARN] uat-client: refresh transient error (code=%d) for %s, retrying once\n", code, opts.UserOpenId)
 			data, err = callEndpoint()
 			if err != nil {

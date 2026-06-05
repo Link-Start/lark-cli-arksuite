@@ -4,8 +4,10 @@
 package im
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -14,6 +16,8 @@ import (
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/spf13/cobra"
+
+	"github.com/larksuite/cli/internal/cmdutil"
 )
 
 func TestSanitizeURLForDisplay(t *testing.T) {
@@ -203,14 +207,15 @@ func TestBuildChatMessageListRequest(t *testing.T) {
 		}
 
 		want := larkcore.QueryParams{
-			"container_id_type":     {"chat"},
-			"container_id":          {"oc_123"},
-			"sort_type":             {"ByCreateTimeAsc"},
-			"page_size":             {"50"},
-			"card_msg_content_type": {"raw_card_content"},
-			"start_time":            {"1772294400"},
-			"end_time":              {"1772467199"},
-			"page_token":            {"next"},
+			"container_id_type":         {"chat"},
+			"container_id":              {"oc_123"},
+			"sort_type":                 {"ByCreateTimeAsc"},
+			"page_size":                 {"50"},
+			"only_thread_root_messages": {"true"},
+			"card_msg_content_type":     {"raw_card_content"},
+			"start_time":                {"1772294400"},
+			"end_time":                  {"1772467199"},
+			"page_token":                {"next"},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("buildChatMessageListRequest() = %#v, want %#v", got, want)
@@ -236,6 +241,13 @@ func TestBuildChatMessageListRequest(t *testing.T) {
 			t.Fatalf("buildChatMessageListRequest() error = %v, want end validation", err)
 		}
 	})
+}
+
+func TestChatMessageListOnlyThreadRootMessagesParams(t *testing.T) {
+	got := buildChatMessageListParams("desc", "20", "oc_123")
+	if vals := got["only_thread_root_messages"]; !reflect.DeepEqual(vals, []string{"true"}) {
+		t.Fatalf("only_thread_root_messages = %#v, want true", vals)
+	}
 }
 
 func TestResolveChatIDForMessagesList(t *testing.T) {
@@ -266,14 +278,8 @@ func TestResolveChatIDForMessagesList(t *testing.T) {
 	})
 
 	t.Run("user resolved through p2p lookup", func(t *testing.T) {
-		runtime := newBotShortcutRuntime(t, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		runtime := newUserShortcutRuntime(t, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 			switch {
-			case strings.Contains(req.URL.Path, "tenant_access_token"):
-				return shortcutJSONResponse(200, map[string]interface{}{
-					"code":                0,
-					"tenant_access_token": "tenant-token",
-					"expire":              7200,
-				}), nil
 			case strings.Contains(req.URL.Path, "/open-apis/im/v1/chat_p2p/batch_query"):
 				return shortcutJSONResponse(200, map[string]interface{}{
 					"code": 0,
@@ -302,11 +308,28 @@ func TestResolveChatIDForMessagesList(t *testing.T) {
 			t.Fatalf("resolveChatIDForMessagesList() = %q, want %q", got, "oc_resolved")
 		}
 	})
+
+	t.Run("user target rejected for bot identity", func(t *testing.T) {
+		runtime := newBotShortcutRuntime(t, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("unexpected request: %s", req.URL.String())
+		}))
+		cmd := &cobra.Command{Use: "test"}
+		cmd.Flags().String("user-id", "", "")
+		if err := cmd.Flags().Set("user-id", "ou_123"); err != nil {
+			t.Fatalf("Flags().Set() error = %v", err)
+		}
+		runtime.Cmd = cmd
+
+		_, err := resolveChatIDForMessagesList(runtime, false)
+		if err == nil || !strings.Contains(err.Error(), "requires user identity") {
+			t.Fatalf("resolveChatIDForMessagesList() error = %v, want requires user identity", err)
+		}
+	})
 }
 
 func TestBuildMessagesSearchRequest(t *testing.T) {
 	t.Run("valid request", func(t *testing.T) {
-		runtime := newTestRuntimeContext(t, map[string]string{
+		runtime := newMessagesSearchTestRuntimeContext(t, map[string]string{
 			"query":                   "hello",
 			"chat-id":                 "oc_1,oc_2",
 			"sender":                  "ou_1,ou_2",
@@ -356,7 +379,7 @@ func TestBuildMessagesSearchRequest(t *testing.T) {
 	})
 
 	t.Run("start later than end", func(t *testing.T) {
-		runtime := newTestRuntimeContext(t, map[string]string{
+		runtime := newMessagesSearchTestRuntimeContext(t, map[string]string{
 			"start": "2026-03-03T00:00:00+08:00",
 			"end":   "2026-03-02T00:00:00+08:00",
 		}, nil)
@@ -367,8 +390,37 @@ func TestBuildMessagesSearchRequest(t *testing.T) {
 	})
 
 	t.Run("invalid sender id", func(t *testing.T) {
-		runtime := newTestRuntimeContext(t, map[string]string{
+		runtime := newMessagesSearchTestRuntimeContext(t, map[string]string{
 			"sender": "bad_sender",
+		}, nil)
+		_, err := buildMessagesSearchRequest(runtime)
+		if err == nil || !strings.Contains(err.Error(), "invalid user ID format") {
+			t.Fatalf("buildMessagesSearchRequest() error = %v", err)
+		}
+	})
+
+	t.Run("at-chatter-ids accepts user ids", func(t *testing.T) {
+		runtime := newMessagesSearchTestRuntimeContext(t, map[string]string{
+			"query":          "standup",
+			"at-chatter-ids": "ou_a, ou_b",
+		}, nil)
+
+		got, err := buildMessagesSearchRequest(runtime)
+		if err != nil {
+			t.Fatalf("buildMessagesSearchRequest() error = %v", err)
+		}
+
+		filter, _ := got.body["filter"].(map[string]interface{})
+		ids, _ := filter["at_chatter_ids"].([]string)
+		want := []string{"ou_a", "ou_b"}
+		if !reflect.DeepEqual(ids, want) {
+			t.Fatalf("at_chatter_ids = %#v, want %#v", ids, want)
+		}
+	})
+
+	t.Run("at-chatter-ids rejects bad id", func(t *testing.T) {
+		runtime := newMessagesSearchTestRuntimeContext(t, map[string]string{
+			"at-chatter-ids": "ou_a,not_a_user",
 		}, nil)
 		_, err := buildMessagesSearchRequest(runtime)
 		if err == nil || !strings.Contains(err.Error(), "invalid user ID format") {
@@ -406,65 +458,38 @@ func TestBuildSearchChatBodyAdditionalBranches(t *testing.T) {
 	}
 }
 
-func TestResolveToLocalPath(t *testing.T) {
-	t.Run("media key returns empty path", func(t *testing.T) {
-		got, cleanup, err := resolveToLocalPath(context.Background(), nil, "--image", "img_123")
-		if err != nil {
-			t.Fatalf("resolveToLocalPath() error = %v", err)
-		}
-		defer cleanup()
-		if got != "" {
-			t.Fatalf("resolveToLocalPath() = %q, want empty path", got)
-		}
-	})
-
-	t.Run("local path passthrough", func(t *testing.T) {
-		got, cleanup, err := resolveToLocalPath(context.Background(), nil, "--file", "report.pdf")
-		if err != nil {
-			t.Fatalf("resolveToLocalPath() error = %v", err)
-		}
-		defer cleanup()
-		if got != "report.pdf" {
-			t.Fatalf("resolveToLocalPath() = %q, want %q", got, "report.pdf")
-		}
-	})
-}
-
 func TestParseMediaDurationSuccess(t *testing.T) {
 	t.Run("mp4", func(t *testing.T) {
-		f, err := os.CreateTemp("", "im-duration-*.mp4")
-		if err != nil {
-			t.Fatalf("CreateTemp() error = %v", err)
+		cmdutil.TestChdir(t, t.TempDir())
+		fname := "im-duration-test.mp4"
+		if err := os.WriteFile(fname, wrapInMoov(buildMvhdBox(0, 1000, 5000)), 0644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
 		}
-		defer os.Remove(f.Name())
-		defer f.Close()
-
-		if _, err := f.Write(wrapInMoov(buildMvhdBox(0, 1000, 5000))); err != nil {
-			t.Fatalf("Write() error = %v", err)
-		}
-		if got := parseMediaDuration(f.Name(), "mp4"); got != "5000" {
+		rt := newBotShortcutRuntime(t, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("unexpected")
+		}))
+		if got := parseMediaDuration(rt, fname, "mp4"); got != "5000" {
 			t.Fatalf("parseMediaDuration(mp4) = %q, want %q", got, "5000")
 		}
 	})
 
 	t.Run("opus", func(t *testing.T) {
-		f, err := os.CreateTemp("", "im-duration-*.ogg")
-		if err != nil {
-			t.Fatalf("CreateTemp() error = %v", err)
-		}
-		defer os.Remove(f.Name())
-		defer f.Close()
-
+		cmdutil.TestChdir(t, t.TempDir())
 		page := make([]byte, 27)
 		copy(page[0:4], "OggS")
 		page[5] = 4
 		page[6] = 0x00
 		page[7] = 0x53
 		page[8] = 0x07
-		if _, err := f.Write(page); err != nil {
-			t.Fatalf("Write() error = %v", err)
+
+		fname := "im-duration-test.ogg"
+		if err := os.WriteFile(fname, page, 0644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
 		}
-		if got := parseMediaDuration(f.Name(), "opus"); got != "10000" {
+		rt := newBotShortcutRuntime(t, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("unexpected")
+		}))
+		if got := parseMediaDuration(rt, fname, "opus"); got != "10000" {
 			t.Fatalf("parseMediaDuration(opus) = %q, want %q", got, "10000")
 		}
 	})
@@ -502,6 +527,159 @@ func TestResolveMediaContentURLFallback(t *testing.T) {
 			}
 			if !strings.Contains(gotContent, tt.wantText) {
 				t.Fatalf("resolveMediaContent() content = %q, want substring %q", gotContent, tt.wantText)
+			}
+		})
+	}
+}
+
+func TestLimitedReadCloser(t *testing.T) {
+	t.Run("within limit", func(t *testing.T) {
+		body := io.NopCloser(bytes.NewReader([]byte("hello")))
+		lr := &limitedReadCloser{
+			r:      io.LimitReader(body, 10+1),
+			closer: body,
+			max:    10,
+		}
+		data, err := io.ReadAll(lr)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		if string(data) != "hello" {
+			t.Fatalf("ReadAll() = %q, want %q", string(data), "hello")
+		}
+		if err := lr.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	})
+
+	t.Run("exceeds limit", func(t *testing.T) {
+		body := io.NopCloser(bytes.NewReader([]byte("hello world")))
+		lr := &limitedReadCloser{
+			r:      io.LimitReader(body, 5+1),
+			closer: body,
+			max:    5,
+		}
+		_, err := io.ReadAll(lr)
+		if err == nil || !strings.Contains(err.Error(), "exceeds size limit") {
+			t.Fatalf("ReadAll() error = %v, want size limit error", err)
+		}
+	})
+}
+
+func TestMediaBufferDuration(t *testing.T) {
+	t.Run("mp4 duration from bytes", func(t *testing.T) {
+		data := wrapInMoov(buildMvhdBox(0, 1000, 5000))
+		mb := &mediaBuffer{data: data, ext: ".mp4"}
+		if got := mb.Duration(); got != "5000" {
+			t.Fatalf("Duration() = %q, want %q", got, "5000")
+		}
+	})
+
+	t.Run("opus duration from bytes", func(t *testing.T) {
+		page := make([]byte, 27)
+		copy(page[0:4], "OggS")
+		page[5] = 4
+		page[6] = 0x00
+		page[7] = 0x53
+		page[8] = 0x07
+		mb := &mediaBuffer{data: page, ext: ".ogg"}
+		if got := mb.Duration(); got != "10000" {
+			t.Fatalf("Duration() = %q, want %q", got, "10000")
+		}
+	})
+
+	t.Run("unsupported type returns empty", func(t *testing.T) {
+		mb := &mediaBuffer{data: []byte("data"), ext: ".txt"}
+		if got := mb.Duration(); got != "" {
+			t.Fatalf("Duration() = %q, want empty", got)
+		}
+	})
+
+	t.Run("empty data returns empty", func(t *testing.T) {
+		mb := &mediaBuffer{data: nil, ext: ".mp4"}
+		if got := mb.Duration(); got != "" {
+			t.Fatalf("Duration() = %q, want empty", got)
+		}
+	})
+}
+
+func TestMediaBufferFileType(t *testing.T) {
+	tests := []struct {
+		ext  string
+		want string
+	}{
+		{".mp4", "mp4"},
+		{".ogg", "opus"},
+		{".pdf", "pdf"},
+		{".unknown", "stream"},
+	}
+	for _, tt := range tests {
+		mb := &mediaBuffer{ext: tt.ext}
+		if got := mb.FileType(); got != tt.want {
+			t.Fatalf("FileType(%s) = %q, want %q", tt.ext, got, tt.want)
+		}
+	}
+}
+
+func TestMediaBufferReader(t *testing.T) {
+	data := []byte("test content")
+	mb := &mediaBuffer{data: data, ext: ".txt"}
+
+	// Read twice to verify re-readability
+	for i := 0; i < 2; i++ {
+		got, err := io.ReadAll(mb.Reader())
+		if err != nil {
+			t.Fatalf("ReadAll() attempt %d error = %v", i+1, err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatalf("ReadAll() attempt %d = %q, want %q", i+1, got, data)
+		}
+	}
+}
+
+func TestMediaBufferFileName(t *testing.T) {
+	tests := []struct {
+		label string
+		buf   mediaBuffer
+		want  string
+	}{
+		{"original URL filename", mediaBuffer{name: "report.pdf", ext: ".pdf"}, "report.pdf"},
+		{"name with spaces", mediaBuffer{name: "Q1 report.pdf", ext: ".pdf"}, "Q1 report.pdf"},
+		{"download fallback", mediaBuffer{name: "download", ext: ""}, "download"},
+		{"ext not leaked into name", mediaBuffer{name: "x", ext: ".mp4"}, "x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			if got := tt.buf.FileName(); got != tt.want {
+				t.Fatalf("FileName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNewMediaBufferFromBytesURLFilename locks in the URL -> mediaBuffer.name
+// wiring so a future refactor cannot regress back to the "media.<ext>" synthetic
+// filename that was shipped in 91067ec.
+func TestNewMediaBufferFromBytesURLFilename(t *testing.T) {
+	tests := []struct {
+		label string
+		url   string
+		want  string
+	}{
+		{"path filename", "http://example.com/report.pdf", "report.pdf"},
+		{"filename survives query string", "http://example.com/videos/clip.mp4?token=abc", "clip.mp4"},
+		{"percent-encoded spaces decoded", "http://example.com/Q1%20report.pdf", "Q1 report.pdf"},
+		{"no path falls back to download", "http://example.com/", "download"},
+		{"non-http scheme falls back to download", "ftp://example.com/x.pdf", "download"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			mb := newMediaBufferFromBytes([]byte("payload"), ".pdf", tt.url)
+			if got := mb.FileName(); got != tt.want {
+				t.Fatalf("FileName() for %q = %q, want %q", tt.url, got, tt.want)
+			}
+			if got := mb.FileName(); strings.HasPrefix(got, "media") && tt.want != "media" {
+				t.Fatalf("regression: FileName() returned synthetic %q for %q", got, tt.url)
 			}
 		})
 	}

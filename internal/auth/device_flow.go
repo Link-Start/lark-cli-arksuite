@@ -54,8 +54,8 @@ type OAuthEndpoints struct {
 func ResolveOAuthEndpoints(brand core.LarkBrand) OAuthEndpoints {
 	ep := core.ResolveEndpoints(brand)
 	return OAuthEndpoints{
-		DeviceAuthorization: ep.Accounts + "/oauth/v1/device_authorization",
-		Token:               ep.Open + "/open-apis/authen/v2/oauth/token",
+		DeviceAuthorization: ep.Accounts + PathDeviceAuthorization,
+		Token:               ep.Open + PathOAuthTokenV2,
 	}
 }
 
@@ -93,6 +93,7 @@ func RequestDeviceAuthorization(httpClient *http.Client, appId, appSecret string
 		return nil, err
 	}
 	defer resp.Body.Close()
+	logHTTPResponse(resp)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -141,8 +142,12 @@ func PollDeviceToken(ctx context.Context, httpClient *http.Client, appId, appSec
 		errOut = io.Discard
 	}
 
+	if interval < 1 {
+		interval = 5
+	}
+
 	const maxPollInterval = 60
-	const maxPollAttempts = 200
+	const maxPollAttempts = 600
 
 	endpoints := ResolveOAuthEndpoints(brand)
 	deadline := time.Now().Add(time.Duration(expiresIn) * time.Second)
@@ -179,6 +184,7 @@ func PollDeviceToken(ctx context.Context, httpClient *http.Client, appId, appSec
 			currentInterval = minInt(currentInterval+1, maxPollInterval)
 			continue
 		}
+		logHTTPResponse(resp)
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -198,7 +204,7 @@ func PollDeviceToken(ctx context.Context, httpClient *http.Client, appId, appSec
 		errStr := getStr(data, "error")
 
 		if errStr == "" && getStr(data, "access_token") != "" {
-			fmt.Fprintf(errOut, "[lark-cli] device-flow: token obtained successfully\n")
+			fmt.Fprintf(errOut, "[lark-cli] device-flow: token response received\n")
 			refreshToken := getStr(data, "refresh_token")
 			tokenExpiresIn := getInt(data, "expires_in", 7200)
 			refreshExpiresIn := getInt(data, "refresh_token_expires_in", 604800)
@@ -258,6 +264,7 @@ func PollDeviceToken(ctx context.Context, httpClient *http.Client, appId, appSec
 
 // helpers
 
+// minInt returns the smaller of a or b.
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -265,6 +272,7 @@ func minInt(a, b int) int {
 	return b
 }
 
+// getStr retrieves a string value from a map, returning an empty string if not found or not a string.
 func getStr(m map[string]interface{}, key string) string {
 	if v, ok := m[key]; ok {
 		if s, ok := v.(string); ok {
@@ -274,6 +282,7 @@ func getStr(m map[string]interface{}, key string) string {
 	return ""
 }
 
+// getInt retrieves an integer value from a map, returning a fallback value if not found or not a number.
 func getInt(m map[string]interface{}, key string, fallback int) int {
 	if v, ok := m[key]; ok {
 		switch n := v.(type) {

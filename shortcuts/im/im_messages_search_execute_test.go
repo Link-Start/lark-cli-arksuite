@@ -24,15 +24,12 @@ func newMessagesSearchRuntime(t *testing.T, stringFlags map[string]string, boolF
 	runtime := newBotShortcutRuntime(t, rt)
 	cmd := &cobra.Command{Use: "test"}
 
-	stringFlagNames := []string{
-		"query",
-		"page-size",
-		"page-token",
-		"page-limit",
-	}
+	stringFlagNames := []string{"query", "page-token", "at-chatter-ids"}
 	for _, name := range stringFlagNames {
 		cmd.Flags().String(name, "", "")
 	}
+	cmd.Flags().Int("page-size", 20, "")
+	cmd.Flags().Int("page-limit", 20, "")
 	boolFlagNames := []string{"page-all"}
 	for _, name := range boolFlagNames {
 		cmd.Flags().Bool(name, false, "")
@@ -69,12 +66,6 @@ func TestImMessagesSearchExecuteAutoPaginationBatches(t *testing.T) {
 		"page-all": true,
 	}, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
-		case strings.Contains(req.URL.Path, "tenant_access_token"):
-			return shortcutJSONResponse(200, map[string]interface{}{
-				"code":                0,
-				"tenant_access_token": "tenant-token",
-				"expire":              7200,
-			}), nil
 		case strings.Contains(req.URL.Path, "/open-apis/im/v1/messages/search"):
 			pageToken := req.URL.Query().Get("page_token")
 			searchPageTokens = append(searchPageTokens, pageToken)
@@ -167,12 +158,6 @@ func TestImMessagesSearchExecuteExplicitPageLimitWithoutPageAll(t *testing.T) {
 		"page-limit": "2",
 	}, nil, shortcutRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
-		case strings.Contains(req.URL.Path, "tenant_access_token"):
-			return shortcutJSONResponse(200, map[string]interface{}{
-				"code":                0,
-				"tenant_access_token": "tenant-token",
-				"expire":              7200,
-			}), nil
 		case strings.Contains(req.URL.Path, "/open-apis/im/v1/messages/search"):
 			searchCalls++
 			pageToken := req.URL.Query().Get("page_token")

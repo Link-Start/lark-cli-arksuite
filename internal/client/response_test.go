@@ -6,6 +6,7 @@ package client
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,7 +15,9 @@ import (
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 
+	"github.com/larksuite/cli/errs"
 	"github.com/larksuite/cli/internal/output"
+	"github.com/larksuite/cli/internal/vfs/localfileio"
 )
 
 func newApiResp(body []byte, headers map[string]string) *larkcore.ApiResp {
@@ -72,6 +75,17 @@ func TestParseJSONResponse_Invalid(t *testing.T) {
 	_, err := ParseJSONResponse(resp)
 	if err == nil {
 		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestParseJSONResponse_EmptyBody_WrapsEOF(t *testing.T) {
+	resp := newApiResp([]byte{}, map[string]string{"Content-Type": "application/json"})
+	_, err := ParseJSONResponse(resp)
+	if err == nil {
+		t.Fatal("expected error for empty body")
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("expected wrapped io.EOF, got %v", err)
 	}
 }
 
@@ -150,11 +164,11 @@ func TestSaveResponse(t *testing.T) {
 	body := []byte("hello binary data")
 	resp := newApiResp(body, map[string]string{"Content-Type": "application/octet-stream"})
 
-	meta, err := SaveResponse(resp, "test_output.bin")
+	meta, err := SaveResponse(&localfileio.LocalFileIO{}, resp, "test_output.bin")
 	if err != nil {
 		t.Fatalf("SaveResponse failed: %v", err)
 	}
-	if meta["size_bytes"] != len(body) {
+	if meta["size_bytes"] != int64(len(body)) {
 		t.Errorf("expected size_bytes=%d, got %v", len(body), meta["size_bytes"])
 	}
 
@@ -176,7 +190,7 @@ func TestSaveResponse_CreatesDir(t *testing.T) {
 
 	resp := newApiResp([]byte("data"), map[string]string{"Content-Type": "application/octet-stream"})
 
-	meta, err := SaveResponse(resp, filepath.Join("sub", "deep", "out.bin"))
+	meta, err := SaveResponse(&localfileio.LocalFileIO{}, resp, filepath.Join("sub", "deep", "out.bin"))
 	if err != nil {
 		t.Fatalf("SaveResponse with nested dir failed: %v", err)
 	}
@@ -195,6 +209,7 @@ func TestHandleResponse_JSON(t *testing.T) {
 	err := HandleResponse(resp, ResponseOptions{
 		Out:    &out,
 		ErrOut: &errOut,
+		FileIO: &localfileio.LocalFileIO{},
 	})
 	if err != nil {
 		t.Fatalf("HandleResponse failed: %v", err)
@@ -213,6 +228,7 @@ func TestHandleResponse_JSONWithError(t *testing.T) {
 	err := HandleResponse(resp, ResponseOptions{
 		Out:    &out,
 		ErrOut: &errOut,
+		FileIO: &localfileio.LocalFileIO{},
 	})
 	if err == nil {
 		t.Error("expected error for non-zero code")
@@ -232,6 +248,7 @@ func TestHandleResponse_BinaryAutoSave(t *testing.T) {
 	err := HandleResponse(resp, ResponseOptions{
 		Out:    &out,
 		ErrOut: &errOut,
+		FileIO: &localfileio.LocalFileIO{},
 	})
 	if err != nil {
 		t.Fatalf("HandleResponse binary failed: %v", err)
@@ -255,6 +272,7 @@ func TestHandleResponse_BinaryWithOutput(t *testing.T) {
 		OutputPath: "out.png",
 		Out:        &out,
 		ErrOut:     &errOut,
+		FileIO:     &localfileio.LocalFileIO{},
 	})
 	if err != nil {
 		t.Fatalf("HandleResponse with output path failed: %v", err)
@@ -269,7 +287,7 @@ func TestHandleResponse_NonJSONError_404(t *testing.T) {
 	resp := newApiRespWithStatus(404, []byte("404 page not found"), map[string]string{"Content-Type": "text/plain"})
 
 	var out, errOut bytes.Buffer
-	err := HandleResponse(resp, ResponseOptions{Out: &out, ErrOut: &errOut})
+	err := HandleResponse(resp, ResponseOptions{Out: &out, ErrOut: &errOut, FileIO: &localfileio.LocalFileIO{}})
 	if err == nil {
 		t.Fatal("expected error for 404 text/plain")
 	}
@@ -277,9 +295,12 @@ func TestHandleResponse_NonJSONError_404(t *testing.T) {
 	if !strings.Contains(got, "HTTP 404") || !strings.Contains(got, "404 page not found") {
 		t.Errorf("expected 'HTTP 404: 404 page not found', got: %s", got)
 	}
-	var exitErr *output.ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != output.ExitAPI {
-		t.Errorf("expected ExitAPI (%d) for 4xx, got code: %d", output.ExitAPI, exitErr.Code)
+	var apiErr *errs.APIError
+	if !errors.As(err, &apiErr) {
+		t.Errorf("expected *errs.APIError, got %T", err)
+	}
+	if output.ExitCodeOf(err) != output.ExitAPI {
+		t.Errorf("expected ExitAPI (%d), got %d", output.ExitAPI, output.ExitCodeOf(err))
 	}
 }
 
@@ -287,7 +308,7 @@ func TestHandleResponse_NonJSONError_502(t *testing.T) {
 	resp := newApiRespWithStatus(502, []byte("<html>Bad Gateway</html>"), map[string]string{"Content-Type": "text/html"})
 
 	var out, errOut bytes.Buffer
-	err := HandleResponse(resp, ResponseOptions{Out: &out, ErrOut: &errOut})
+	err := HandleResponse(resp, ResponseOptions{Out: &out, ErrOut: &errOut, FileIO: &localfileio.LocalFileIO{}})
 	if err == nil {
 		t.Fatal("expected error for 502 text/html")
 	}
@@ -295,9 +316,12 @@ func TestHandleResponse_NonJSONError_502(t *testing.T) {
 	if !strings.Contains(got, "HTTP 502") || !strings.Contains(got, "Bad Gateway") {
 		t.Errorf("expected 'HTTP 502' and 'Bad Gateway' in error, got: %s", got)
 	}
-	var exitErr *output.ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != output.ExitNetwork {
-		t.Errorf("expected ExitNetwork (%d) for 5xx, got code: %d", output.ExitNetwork, exitErr.Code)
+	var netErr *errs.NetworkError
+	if !errors.As(err, &netErr) {
+		t.Errorf("expected *errs.NetworkError, got %T", err)
+	}
+	if output.ExitCodeOf(err) != output.ExitNetwork {
+		t.Errorf("expected ExitNetwork (%d) for 5xx, got %d", output.ExitNetwork, output.ExitCodeOf(err))
 	}
 }
 
@@ -310,7 +334,7 @@ func TestHandleResponse_200TextPlain_SavesFile(t *testing.T) {
 	resp := newApiRespWithStatus(200, []byte("plain text file content"), map[string]string{"Content-Type": "text/plain"})
 
 	var out, errOut bytes.Buffer
-	err := HandleResponse(resp, ResponseOptions{Out: &out, ErrOut: &errOut})
+	err := HandleResponse(resp, ResponseOptions{Out: &out, ErrOut: &errOut, FileIO: &localfileio.LocalFileIO{}})
 	if err != nil {
 		t.Fatalf("expected no error for 200 text/plain, got: %v", err)
 	}
@@ -319,16 +343,60 @@ func TestHandleResponse_200TextPlain_SavesFile(t *testing.T) {
 	}
 }
 
-func TestHandleResponse_403JSON_CheckLarkResponse(t *testing.T) {
-	body := []byte(`{"code":99991400,"msg":"invalid token"}`)
-	resp := newApiRespWithStatus(403, body, map[string]string{"Content-Type": "application/json"})
+func TestHandleResponse_BinaryWithJq_RejectsNonJSON(t *testing.T) {
+	resp := newApiResp([]byte("PNG DATA"), map[string]string{"Content-Type": "image/png"})
 
 	var out, errOut bytes.Buffer
-	err := HandleResponse(resp, ResponseOptions{Out: &out, ErrOut: &errOut})
+	err := HandleResponse(resp, ResponseOptions{
+		JqExpr: ".data",
+		Out:    &out,
+		ErrOut: &errOut,
+	})
 	if err == nil {
-		t.Fatal("expected error for 403 JSON with non-zero code")
+		t.Fatal("expected error when --jq is used with non-JSON response")
 	}
-	if !strings.Contains(err.Error(), "99991400") {
-		t.Errorf("expected lark error code in message, got: %s", err.Error())
+	if !strings.Contains(err.Error(), "--jq requires a JSON response") {
+		t.Errorf("expected '--jq requires a JSON response' error, got: %v", err)
+	}
+}
+
+func TestSaveResponse_RejectsPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	origWd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origWd)
+
+	resp := newApiResp([]byte("data"), map[string]string{"Content-Type": "application/octet-stream"})
+	_, err := SaveResponse(&localfileio.LocalFileIO{}, resp, "../../evil.txt")
+	if err == nil {
+		t.Fatal("expected error for path traversal")
+	}
+	if !strings.Contains(err.Error(), "unsafe output path") {
+		t.Errorf("expected 'unsafe output path' wrapper, got: %v", err)
+	}
+}
+
+func TestSaveResponse_RejectsAbsolutePath(t *testing.T) {
+	resp := newApiResp([]byte("data"), map[string]string{"Content-Type": "application/octet-stream"})
+	_, err := SaveResponse(&localfileio.LocalFileIO{}, resp, "/tmp/evil.txt")
+	if err == nil {
+		t.Fatal("expected error for absolute path")
+	}
+}
+
+func TestSaveResponse_MetadataContainsAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	origWd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origWd)
+
+	resp := newApiResp([]byte("x"), map[string]string{"Content-Type": "text/plain"})
+	meta, err := SaveResponse(&localfileio.LocalFileIO{}, resp, "rel.txt")
+	if err != nil {
+		t.Fatalf("SaveResponse failed: %v", err)
+	}
+	savedPath, _ := meta["saved_path"].(string)
+	if !filepath.IsAbs(savedPath) {
+		t.Errorf("saved_path should be absolute, got %q", savedPath)
 	}
 }

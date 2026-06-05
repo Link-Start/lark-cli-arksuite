@@ -22,7 +22,6 @@ const (
 	messagesSearchDefaultPageLimit = 20
 	messagesSearchMaxPageLimit     = 40
 	messagesSearchMGetBatchSize    = 50
-	messagesSearchChatBatchSize    = 50
 )
 
 var ImMessagesSearch = common.Shortcut{
@@ -459,23 +458,9 @@ func batchMGetMessages(runtime *common.RuntimeContext, messageIds []string) ([]i
 
 func batchQueryChatContexts(runtime *common.RuntimeContext, chatIds []string) map[string]map[string]interface{} {
 	chatContexts := map[string]map[string]interface{}{}
-	for _, batch := range chunkStrings(chatIds, messagesSearchChatBatchSize) {
-		chatRes, chatErr := runtime.DoAPIJSON(
-			http.MethodPost, "/open-apis/im/v1/chats/batch_query",
-			larkcore.QueryParams{"user_id_type": []string{"open_id"}},
-			map[string]interface{}{"chat_ids": batch},
-		)
-		if chatErr != nil {
-			continue
-		}
-		if chatItems, ok := chatRes["items"].([]interface{}); ok {
-			for _, ci := range chatItems {
-				cm, _ := ci.(map[string]interface{})
-				if cid, _ := cm["chat_id"].(string); cid != "" {
-					chatContexts[cid] = cm
-				}
-			}
-		}
+	// Best-effort: a failed chunk only loses its own entries.
+	for _, batch := range chunkStrings(chatIds, chatBatchQuerySize) {
+		_ = queryChatBatch(runtime, batch, chatContexts)
 	}
 	return chatContexts
 }

@@ -1405,3 +1405,302 @@ func resolveThreadFeedItemType(rt *common.RuntimeContext, chatID string) (ItemTy
 	}
 	return ItemTypeMsgThread, nil
 }
+
+// ShortcutType enumerates the OpenAPI feed-shortcut types.
+// Currently the server only opens CHAT (1) externally; other internal values
+// (DOC, OPENAPP, etc.) are not yet whitelisted on the OAPI gateway.
+type ShortcutType int
+
+const (
+	ShortcutTypeUnknown ShortcutType = 0
+	ShortcutTypeChat    ShortcutType = 1
+)
+
+const (
+	feedShortcutBatchLimit = 10
+	feedShortcutWriteScope = "im:feed.shortcut:write"
+	feedShortcutReadScope  = "im:feed.shortcut:read"
+)
+
+// shortcutItem is one entry in the feed_shortcuts API body.
+type shortcutItem struct {
+	FeedCardID string `json:"feed_card_id"`
+	Type       int    `json:"type"`
+}
+
+// collectChatIDs reads --chat-id values (repeatable + comma-split) and
+// returns deduped, validated oc_ IDs. The server batch limit is 10.
+func collectChatIDs(rt *common.RuntimeContext) ([]string, error) {
+	raw := rt.StrSlice("chat-id")
+	if len(raw) == 0 {
+		return nil, output.ErrValidation("--chat-id is required (oc_xxx); repeat the flag or pass comma-separated values")
+	}
+
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if !strings.HasPrefix(v, "oc_") {
+			return nil, output.ErrValidation(
+				"invalid --chat-id %q: must be an open_chat_id starting with oc_", v)
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	if len(out) == 0 {
+		return nil, output.ErrValidation("--chat-id is required (oc_xxx)")
+	}
+	if len(out) > feedShortcutBatchLimit {
+		return nil, output.ErrValidation(
+			"too many --chat-id values (%d); the server accepts up to %d per request",
+			len(out), feedShortcutBatchLimit)
+	}
+	return out, nil
+}
+
+// buildShortcutItems converts chat IDs to API payload entries (type=CHAT).
+func buildShortcutItems(ids []string) []shortcutItem {
+	items := make([]shortcutItem, 0, len(ids))
+	for _, id := range ids {
+		items = append(items, shortcutItem{FeedCardID: id, Type: int(ShortcutTypeChat)})
+	}
+	return items
+}
+
+// shortcutFailedReasonString converts the numeric failed-reason enum returned
+// by the server into a human-readable label. Used to enrich the response
+// when the API reports per-item failures.
+func shortcutFailedReasonString(reason int) string {
+	switch reason {
+	case 0:
+		return "unknown"
+	case 1:
+		return "no_permission"
+	case 2:
+		return "invalid_item"
+	case 3:
+		return "has_pending_delete"
+	case 4:
+		return "type_not_support"
+	case 5:
+		return "internal_error"
+	}
+	return "unknown"
+}
+
+// chatBatchQueryScope is the scope required by im.chats.batch_query, which
+// the CHAT detail resolver depends on. Surfaced as a conditional scope on
+// +feed-shortcut-list so the framework's scope diagnostics know about it.
+const chatBatchQueryScope = "im:chat:read"
+
+// chatBatchQuerySize matches the server-side limit on /im/v1/chats/batch_query.
+const chatBatchQuerySize = 50
+
+// shortcutTypeFromValue parses the type field as returned by the v2
+// feed_shortcuts API. JSON numbers come back as float64 after generic
+// unmarshal; we also tolerate the int form for forward-compat.
+func shortcutTypeFromValue(v any) ShortcutType {
+	switch n := v.(type) {
+	case float64:
+		return ShortcutType(int(n))
+	case int:
+		return ShortcutType(n)
+	}
+	return ShortcutTypeUnknown
+}
+
+// queryChatBatch fetches one im.chats.batch_query page (at most
+// chatBatchQuerySize ids) and merges the full chat objects into dst keyed by
+// chat_id. Shared by feed-shortcut detail enrichment and message-search chat
+// context lookup, which apply their own per-chunk error policies.
+func queryChatBatch(rt *common.RuntimeContext, batch []string, dst map[string]map[string]any) error {
+	res, err := rt.DoAPIJSON(http.MethodPost, "/open-apis/im/v1/chats/batch_query",
+		larkcore.QueryParams{"user_id_type": []string{"open_id"}},
+		map[string]any{"chat_ids": batch})
+	if err != nil {
+		return err
+	}
+	items, _ := res["items"].([]any)
+	for _, ci := range items {
+		cm, _ := ci.(map[string]any)
+		if cm == nil {
+			continue
+		}
+		if id := asString(cm["chat_id"]); id != "" {
+			dst[id] = cm
+		}
+	}
+	return nil
+}
+
+// resolveChatDetail batch-fetches the full chat object via
+// im.chats.batch_query (50 ids per request — server limit) and returns the
+// objects keyed by chat_id, verbatim, so the caller can decide which fields
+// to surface. The server's `name` field is empty for p2p chats (client UI
+// shows the partner's display name there), but the full object still carries
+// `chat_mode`, `p2p_target_id`, `description`, etc., so callers can render
+// p2p entries however they want.
+func resolveChatDetail(rt *common.RuntimeContext, ids []string) (map[string]map[string]any, error) {
+	out := map[string]map[string]any{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if err := checkFlagRequiredScopes(rt.Ctx(), rt, []string{chatBatchQueryScope}); err != nil {
+		return nil, err
+	}
+	for _, batch := range chunkStrings(ids, chatBatchQuerySize) {
+		if err := queryChatBatch(rt, batch, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// enrichFeedShortcutDetail walks the list response and attaches the full chat
+// object under `detail` for CHAT-type entries — the only type the OpenAPI
+// gateway exposes today. Mutates data in place.
+//
+// Failures are returned to the caller so it can decide whether to hard-fail
+// the command or downgrade to a warning. Listing the shortcuts succeeds even
+// if enrichment is unavailable (missing scope, network error, etc.).
+func enrichFeedShortcutDetail(rt *common.RuntimeContext, data map[string]any) error {
+	items, _ := data["shortcuts"].([]any)
+	if len(items) == 0 {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	ids := make([]string, 0, len(items))
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		if m == nil || shortcutTypeFromValue(m["type"]) != ShortcutTypeChat {
+			continue
+		}
+		id := asString(m["feed_card_id"])
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	details, err := resolveChatDetail(rt, ids)
+	if err != nil {
+		return err
+	}
+
+	// Missing items (server didn't return one for an id we asked about) are
+	// left untouched, so the presence of `detail` signals a successful lookup.
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		if m == nil || shortcutTypeFromValue(m["type"]) != ShortcutTypeChat {
+			continue
+		}
+		if info, ok := details[asString(m["feed_card_id"])]; ok {
+			m["detail"] = info
+		}
+	}
+	return nil
+}
+
+// annotateFailedShortcuts walks the API response and attaches a
+// reason_label string next to each numeric reason. Mutates data in place.
+func annotateFailedShortcuts(data map[string]any) {
+	items, ok := data["failed_shortcuts"].([]any)
+	if !ok {
+		return
+	}
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		if m == nil {
+			continue
+		}
+		// reason is serialized as a JSON number → float64 after generic unmarshal.
+		switch r := m["reason"].(type) {
+		case float64:
+			m["reason_label"] = shortcutFailedReasonString(int(r))
+		case int:
+			m["reason_label"] = shortcutFailedReasonString(r)
+		}
+	}
+}
+
+// emitFeedShortcutWriteResult preserves the server payload while adding a
+// batch ledger. A feed-shortcut write can return HTTP/API success with
+// failed_shortcuts populated; callers still need a complete account of which
+// requested entries succeeded and which failed.
+func emitFeedShortcutWriteResult(rt *common.RuntimeContext, requested []shortcutItem, data map[string]any) error {
+	// A fully-successful write can come back as code:0 with data:null, in
+	// which case DoAPIJSON hands us a nil map; the caller is still owed a
+	// ledger, so start from an empty object instead of panicking on write.
+	if data == nil {
+		data = map[string]any{}
+	}
+	annotateFailedShortcuts(data)
+	addFeedShortcutWriteLedger(data, requested)
+	if hasFailedShortcuts(data) {
+		return rt.OutPartialFailure(data, nil)
+	}
+	rt.Out(data, nil)
+	return nil
+}
+
+func addFeedShortcutWriteLedger(data map[string]any, requested []shortcutItem) {
+	failed := failedShortcutItems(data)
+	// Failed entries are matched back to requested items by feed_card_id
+	// alone: every requested item is CHAT-type, so the id is the identity,
+	// and a failed echo with a missing or zero type still excludes its item
+	// from the success list.
+	failedIDs := map[string]struct{}{}
+	for _, it := range failed {
+		m, _ := it.(map[string]any)
+		if m == nil {
+			continue
+		}
+		shortcut, _ := m["shortcut"].(map[string]any)
+		if shortcut == nil {
+			continue
+		}
+		if id := asString(shortcut["feed_card_id"]); id != "" {
+			failedIDs[id] = struct{}{}
+		}
+	}
+
+	succeeded := make([]shortcutItem, 0, len(requested))
+	for _, it := range requested {
+		if _, isFailed := failedIDs[it.FeedCardID]; isFailed {
+			continue
+		}
+		succeeded = append(succeeded, it)
+	}
+
+	// Counts are derived from the requested-item accounting alone so the
+	// success+failure==total invariant holds even if the server echoes a
+	// failed entry twice or reports one we never asked about;
+	// failed_shortcuts still carries the raw server report.
+	data["total"] = len(requested)
+	data["success_count"] = len(succeeded)
+	data["failure_count"] = len(requested) - len(succeeded)
+	data["succeeded_shortcuts"] = succeeded
+}
+
+func hasFailedShortcuts(data map[string]any) bool {
+	return len(failedShortcutItems(data)) > 0
+}
+
+func failedShortcutItems(data map[string]any) []any {
+	items, _ := data["failed_shortcuts"].([]any)
+	return items
+}

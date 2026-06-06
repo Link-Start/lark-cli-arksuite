@@ -70,6 +70,9 @@ func executeFetchV2(_ context.Context, runtime *common.RuntimeContext) error {
 	if err != nil {
 		return err
 	}
+	if err := materializeHTML5BlockResources(runtime, runtime.Str("doc-format"), ref.Token, data); err != nil {
+		return err
+	}
 
 	runtime.OutFormatRaw(data, nil, func(w io.Writer) {
 		if doc, ok := data["document"].(map[string]interface{}); ok {

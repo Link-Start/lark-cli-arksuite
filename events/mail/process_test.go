@@ -14,6 +14,13 @@ import (
 )
 
 // processFakeRT lets us stub message metadata fetch.
+//
+// Mock bodies mirror the REAL `GET .../messages/{id}` response shape:
+// payload lives under data.message.*, the sender is the head_from object,
+// the preview/body fields are base64url-encoded, and attachments carry
+// {id, filename, attachment_type}. Verified via:
+//
+//	lark-cli api GET /open-apis/mail/v1/user_mailboxes/{mailbox}/messages/{id}
 type processFakeRT struct {
 	messages    map[string]json.RawMessage
 	pathsCalled []string
@@ -70,7 +77,8 @@ func TestProcessMailEvent_EventFormat_NoFetch(t *testing.T) {
 func TestProcessMailEvent_MetadataFormat_FetchesMessage(t *testing.T) {
 	rt := &processFakeRT{
 		messages: map[string]json.RawMessage{
-			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"from":"sender@x.com","subject":"hello","snippet":"hi there","folder_id":"INBOX","label_ids":["FLAGGED"]}}`),
+			// body_preview "aGkgdGhlcmU=" == base64url("hi there")
+			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"message":{"head_from":{"mail_address":"sender@x.com","name":"Sender"},"subject":"hello","body_preview":"aGkgdGhlcmU=","folder_id":"INBOX","label_ids":["FLAGGED"]}}}`),
 		},
 	}
 	params := map[string]string{"mailbox": "alice@example.com", "msg-format": "metadata"}
@@ -86,12 +94,18 @@ func TestProcessMailEvent_MetadataFormat_FetchesMessage(t *testing.T) {
 	if parsed.Subject != "hello" || parsed.From != "sender@x.com" || parsed.FolderID != "INBOX" {
 		t.Errorf("metadata fields not populated: %+v", parsed)
 	}
+	if parsed.Snippet != "hi there" {
+		t.Errorf("snippet not decoded from body_preview: %+v", parsed)
+	}
+	if len(parsed.LabelIDs) != 1 || parsed.LabelIDs[0] != "FLAGGED" {
+		t.Errorf("label_ids not populated: %+v", parsed)
+	}
 }
 
 func TestProcessMailEvent_FoldersFilter_Drops(t *testing.T) {
 	rt := &processFakeRT{
 		messages: map[string]json.RawMessage{
-			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"folder_id":"TRASH","subject":"x"}}`),
+			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"message":{"folder_id":"TRASH","subject":"x"}}}`),
 		},
 	}
 	params := map[string]string{
@@ -111,7 +125,7 @@ func TestProcessMailEvent_FoldersFilter_Drops(t *testing.T) {
 func TestProcessMailEvent_LabelsFilter_Drops(t *testing.T) {
 	rt := &processFakeRT{
 		messages: map[string]json.RawMessage{
-			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"label_ids":["UNREAD"],"subject":"x"}}`),
+			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"message":{"label_ids":["UNREAD"],"subject":"x"}}}`),
 		},
 	}
 	params := map[string]string{
@@ -131,7 +145,9 @@ func TestProcessMailEvent_LabelsFilter_Drops(t *testing.T) {
 func TestProcessMailEvent_FullFormat_IncludesBodyHTML(t *testing.T) {
 	rt := &processFakeRT{
 		messages: map[string]json.RawMessage{
-			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=full": json.RawMessage(`{"data":{"subject":"x","body_text":"text","body_html":"<p>html</p>","attachments":[{"attachment_id":"a1","filename":"f.pdf","size_bytes":100,"content_type":"application/pdf"}]}}`),
+			// body_plain_text == base64url("full body text"), body_html == base64url("<p>html</p>").
+			// Two attachments: an inline image (is_inline=true) and a real file (is_inline=false).
+			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=full": json.RawMessage(`{"data":{"message":{"subject":"x","body_plain_text":"ZnVsbCBib2R5IHRleHQ=","body_html":"PHA-aHRtbDwvcD4=","attachments":[{"id":"img1","filename":"logo.png","is_inline":true},{"id":"file1","filename":"report.pdf","is_inline":false}]}}}`),
 		},
 	}
 	params := map[string]string{"mailbox": "alice@example.com", "msg-format": "full"}
@@ -141,18 +157,29 @@ func TestProcessMailEvent_FullFormat_IncludesBodyHTML(t *testing.T) {
 	}
 	var parsed MailReceivedPayload
 	json.Unmarshal(out, &parsed)
-	if parsed.BodyHTML != "<p>html</p>" {
-		t.Errorf("missing body_html in full format: %+v", parsed)
+	if parsed.BodyText != "full body text" {
+		t.Errorf("body_text not decoded from body_plain_text: %+v", parsed)
 	}
-	if len(parsed.Attachments) != 1 || parsed.Attachments[0].Filename != "f.pdf" {
-		t.Errorf("missing attachments: %+v", parsed)
+	if parsed.BodyHTML != "<p>html</p>" {
+		t.Errorf("body_html not decoded in full format: %+v", parsed)
+	}
+	if len(parsed.Attachments) != 2 {
+		t.Fatalf("expected 2 attachments, got %+v", parsed.Attachments)
+	}
+	inline, real := parsed.Attachments[0], parsed.Attachments[1]
+	if inline.AttachmentID != "img1" || inline.Filename != "logo.png" || !inline.IsInline {
+		t.Errorf("inline image not mapped from {id,filename,is_inline}: %+v", inline)
+	}
+	if real.AttachmentID != "file1" || real.Filename != "report.pdf" || real.IsInline {
+		t.Errorf("real attachment not mapped (is_inline should be false): %+v", real)
 	}
 }
 
 func TestProcessMailEvent_PlainTextFullFormat_FetchesPlainText(t *testing.T) {
 	rt := &processFakeRT{
 		messages: map[string]json.RawMessage{
-			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=plain_text_full": json.RawMessage(`{"data":{"subject":"hello","body_text":"plain body","body_html":"<p>html</p>"}}`),
+			// body_plain_text == base64url("plain body")
+			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=plain_text_full": json.RawMessage(`{"data":{"message":{"subject":"hello","body_plain_text":"cGxhaW4gYm9keQ==","body_html":"PHA-aHRtbDwvcD4="}}}`),
 		},
 	}
 	params := map[string]string{"mailbox": "alice@example.com", "msg-format": "plain_text_full"}
@@ -206,7 +233,7 @@ func TestProcessMailEvent_FetchAPIError_Wraps(t *testing.T) {
 func TestProcessMailEvent_FoldersFilter_Passes(t *testing.T) {
 	rt := &processFakeRT{
 		messages: map[string]json.RawMessage{
-			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"folder_id":"INBOX","subject":"x"}}`),
+			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"message":{"folder_id":"INBOX","subject":"x"}}}`),
 		},
 	}
 	params := map[string]string{
@@ -226,7 +253,7 @@ func TestProcessMailEvent_FoldersFilter_Passes(t *testing.T) {
 func TestProcessMailEvent_LabelsFilter_PassesAllPresent(t *testing.T) {
 	rt := &processFakeRT{
 		messages: map[string]json.RawMessage{
-			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"label_ids":["FLAGGED","IMPORTANT"],"subject":"x"}}`),
+			"/open-apis/mail/v1/user_mailboxes/alice@example.com/messages/msg_1?format=metadata": json.RawMessage(`{"data":{"message":{"label_ids":["FLAGGED","IMPORTANT"],"subject":"x"}}}`),
 		},
 	}
 	params := map[string]string{

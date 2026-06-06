@@ -5,6 +5,7 @@ package mail
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -63,45 +64,65 @@ func processMailEvent(ctx context.Context, rt event.APIClient, raw *event.RawEve
 		return nil, fmt.Errorf("fetch mail message %s: %w", envFields.MessageID, err)
 	}
 
+	// Response shape: payload is nested under data.message; the sender is the
+	// head_from object; body_preview / body_plain_text / body_html are
+	// base64url-encoded; attachments carry {id, filename, attachment_type}.
+	// Verified via: lark-cli api GET /open-apis/mail/v1/user_mailboxes/{mailbox}/messages/{id}
 	var fetched struct {
 		Data struct {
-			From        string           `json:"from"`
-			Subject     string           `json:"subject"`
-			Snippet     string           `json:"snippet"`
-			FolderID    string           `json:"folder_id"`
-			LabelIDs    []string         `json:"label_ids"`
-			BodyText    string           `json:"body_text"`
-			BodyHTML    string           `json:"body_html"`
-			Attachments []MailAttachment `json:"attachments"`
+			Message struct {
+				HeadFrom struct {
+					MailAddress string `json:"mail_address"`
+					Name        string `json:"name"`
+				} `json:"head_from"`
+				Subject       string   `json:"subject"`
+				BodyPreview   string   `json:"body_preview"`
+				FolderID      string   `json:"folder_id"`
+				LabelIDs      []string `json:"label_ids"`
+				BodyPlainText string   `json:"body_plain_text"`
+				BodyHTML      string   `json:"body_html"`
+				Attachments   []struct {
+					ID       string `json:"id"`
+					Filename string `json:"filename"`
+					IsInline bool   `json:"is_inline"`
+				} `json:"attachments"`
+			} `json:"message"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &fetched); err != nil {
 		return nil, fmt.Errorf("decode fetched mail %s: %w", envFields.MessageID, err)
 	}
+	msg := fetched.Data.Message
 
 	// Filter: folders
-	if len(folders) > 0 && !contains(folders, fetched.Data.FolderID) {
+	if len(folders) > 0 && !contains(folders, msg.FolderID) {
 		return nil, nil
 	}
 	// Filter: labels (event must have ALL of the requested labels)
-	if len(labels) > 0 && !allIn(fetched.Data.LabelIDs, labels) {
+	if len(labels) > 0 && !allIn(msg.LabelIDs, labels) {
 		return nil, nil
 	}
 
 	// Enrich payload based on msg-format
 	if msgFormat == "metadata" || msgFormat == "plain_text_full" || msgFormat == "full" {
-		payload.From = fetched.Data.From
-		payload.Subject = fetched.Data.Subject
-		payload.Snippet = fetched.Data.Snippet
-		payload.FolderID = fetched.Data.FolderID
-		payload.LabelIDs = fetched.Data.LabelIDs
+		payload.From = msg.HeadFrom.MailAddress
+		payload.Subject = msg.Subject
+		payload.Snippet = decodeBase64URL(msg.BodyPreview)
+		payload.FolderID = msg.FolderID
+		payload.LabelIDs = msg.LabelIDs
 	}
 	if msgFormat == "plain_text_full" || msgFormat == "full" {
-		payload.BodyText = fetched.Data.BodyText
+		payload.BodyText = decodeBase64URL(msg.BodyPlainText)
 	}
 	if msgFormat == "full" {
-		payload.BodyHTML = fetched.Data.BodyHTML
-		payload.Attachments = fetched.Data.Attachments
+		payload.BodyHTML = decodeBase64URL(msg.BodyHTML)
+		for _, a := range msg.Attachments {
+			payload.Attachments = append(payload.Attachments, MailAttachment{
+				AttachmentID: a.ID,
+				Filename:     a.Filename,
+				IsInline:     a.IsInline,
+			})
+		}
 	}
 
 	return json.Marshal(payload)
@@ -165,4 +186,21 @@ func allIn(haystack, needles []string) bool {
 		}
 	}
 	return true
+}
+
+// decodeBase64URL decodes the base64url-encoded body fields the mail message
+// API returns (body_preview, body_plain_text, body_html). Tries the padded
+// alphabet first, then raw (unpadded); returns the input unchanged when it
+// isn't valid base64url. Mirrors the decoder in shortcuts/mail.
+func decodeBase64URL(s string) string {
+	if s == "" {
+		return ""
+	}
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return string(b)
+	}
+	if b, err := base64.RawURLEncoding.DecodeString(s); err == nil {
+		return string(b)
+	}
+	return s
 }

@@ -35,11 +35,16 @@ type MailReceivedPayload struct {
 	Attachments []MailAttachment `json:"attachments,omitempty" desc:"Attachment metadata (msg-format=full only)"`
 }
 
+// MailAttachment mirrors the message API's attachment object. The fetch
+// endpoint returns id / filename / is_inline (no size or MIME type); resolve a
+// download URL separately via the attachment download_url API. Inline images
+// embedded in the HTML body (signatures, logos) are returned here too, flagged
+// by is_inline so consumers can skip them.
+// Verified via: lark-cli api GET /open-apis/mail/v1/user_mailboxes/{mailbox}/messages/{id}
 type MailAttachment struct {
-	AttachmentID string `json:"attachment_id" desc:"Attachment ID for fetch"`
+	AttachmentID string `json:"attachment_id" desc:"Attachment ID (resolve a download URL via the attachment download_url API)"`
 	Filename     string `json:"filename"      desc:"Original filename"`
-	SizeBytes    int64  `json:"size_bytes"    desc:"Size in bytes"`
-	ContentType  string `json:"content_type"  desc:"MIME type"`
+	IsInline     bool   `json:"is_inline"     desc:"True for images embedded in the HTML body (e.g. signatures/logos); false for real file attachments"`
 }
 
 // Subscriber is the raw event-envelope `subscriber` block: the set of users

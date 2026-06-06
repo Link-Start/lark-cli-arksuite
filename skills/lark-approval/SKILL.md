@@ -1,7 +1,7 @@
 ---
 name: lark-approval
 version: 1.1.0
-description: "飞书审批：查询和处理当前用户的审批，覆盖待本人审批的任务与本人发起的实例。审批待办不是飞书任务（任务类待办走 lark-task）；不负责创建审批定义和发起新审批。"
+description: "飞书审批：当前用户审批的查询与全部处理操作，覆盖待本人审批的任务与本人发起的实例。审批待办不是飞书任务（任务类待办走 lark-task）；不负责创建审批定义和发起新审批。"
 metadata:
   requires:
     bins: ["lark-cli"]

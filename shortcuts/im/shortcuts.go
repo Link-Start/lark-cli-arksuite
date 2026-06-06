@@ -22,5 +22,8 @@ func Shortcuts() []common.Shortcut {
 		ImFlagCreate,
 		ImFlagCancel,
 		ImFlagList,
+		ImFeedShortcutCreate,
+		ImFeedShortcutRemove,
+		ImFeedShortcutList,
 	}
 }

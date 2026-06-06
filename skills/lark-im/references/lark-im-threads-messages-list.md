@@ -15,7 +15,7 @@ This skill maps to the shortcut: `lark-cli im +threads-messages-list` (internall
 lark-cli im +threads-messages-list --thread omt_xxx
 
 # Reverse chronological order (latest first)
-lark-cli im +threads-messages-list --thread omt_xxx --sort desc
+lark-cli im +threads-messages-list --thread omt_xxx --order desc
 
 # Control page size
 lark-cli im +threads-messages-list --thread omt_xxx --page-size 20
@@ -40,7 +40,7 @@ lark-cli im +threads-messages-list --thread omt_xxx --dry-run
 | Parameter | Required | Description |
 |------|------|------|
 | `--thread <id>` | Yes | Thread ID (`om_xxx` or `omt_xxx` format) |
-| `--sort <order>` | No | Sort order: `asc` (default) / `desc` |
+| `--order <order>` | No | Sort order: `asc` (default) / `desc` |
 | `--page-size <n>` | No | Number of items per page (default 50, range 1-500) |
 | `--page-token <token>` | No | Pagination token for the next page |
 | `--format <fmt>` | No | Output format: `json` (default) / `pretty` / `table` / `ndjson` / `csv` |
@@ -66,9 +66,9 @@ Thread messages do not support `start_time` / `end_time` filtering because of Fe
 
 | Scenario | Recommended Parameters |
 |------|---------|
-| Quickly inspect recent replies | `--sort desc --page-size 10` |
-| Read the full thread in chronological order | `--sort asc --page-size 50`, then paginate as needed |
-| Just confirm whether replies exist | `--sort desc --page-size 1` |
+| Quickly inspect recent replies | `--order desc --page-size 10` |
+| Read the full thread in chronological order | `--order asc --page-size 50`, then paginate as needed |
+| Just confirm whether replies exist | `--order desc --page-size 1` |
 
 ## Usage Scenarios
 

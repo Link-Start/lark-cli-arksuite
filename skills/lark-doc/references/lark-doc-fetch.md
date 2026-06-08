@@ -111,6 +111,7 @@ lark-cli docs +fetch --api-version v2 --doc Z1Fj...tnAc \
 | `--context-before` | 否 | 命中前拉几个兄弟块（仅对顶层单元生效，默认 `0`） |
 | `--context-after` | 否 | 命中后拉几个兄弟块（仅对顶层单元生效，默认 `0`） |
 | `--max-depth` | 否 | `outline` = 标题层级上限；其它 = 子树深度（`-1` 不限，默认） |
+| `--lang` | 否 | 控制 `<cite type="user">` 用户名按指定语言返回（如 `zh_cn` / `en_us` / `ja_jp`）；省略时用当前用户默认语言，仍为空则不传；大小写 / 连字符 / 下划线 / short code 等写法服务端尽量兼容，不支持的语言降级默认用户名 |
 | `--format` | 否 | `json`（默认）\| `pretty` |
 
 ## 图片、文件、画板的处理

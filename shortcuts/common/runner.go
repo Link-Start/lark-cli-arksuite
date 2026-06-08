@@ -89,6 +89,9 @@ func (ctx *RuntimeContext) UserOpenId() string { return ctx.Config.UserOpenId }
 // Lang returns the user's preference as a canonical locale, or "" if unset or
 // unrecognized; callers choose their own fallback.
 func (ctx *RuntimeContext) Lang() i18n.Lang {
+	if ctx.Config == nil {
+		return ""
+	}
 	lang, _ := i18n.Parse(string(ctx.Config.Lang))
 	return lang
 }

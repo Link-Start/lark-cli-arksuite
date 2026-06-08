@@ -26,6 +26,7 @@ func v2FetchFlags() []common.Flag {
 		{Name: "context-before", Desc: "range/keyword/section mode: sibling blocks before match", Type: "int", Default: "0"},
 		{Name: "context-after", Desc: "range/keyword/section mode: sibling blocks after match", Type: "int", Default: "0"},
 		{Name: "max-depth", Desc: "outline: heading level cap; range/keyword/section: block subtree depth (-1 = unlimited)", Type: "int", Default: "-1"},
+		{Name: "lang", Desc: "language for <cite type=\"user\"> display names (e.g. zh_cn, en_us, ja_jp); omit to use the runtime user's default language; unsupported/invalid values fall back to a default name server-side"},
 	}
 }
 
@@ -110,8 +111,25 @@ func buildFetchBody(runtime *common.RuntimeContext) map[string]interface{} {
 		body["read_option"] = ro
 	}
 	injectDocsScene(runtime, body)
+	injectLang(runtime, body)
 
 	return body
+}
+
+// injectLang sets body["lang"] for the <cite type="user"> display-name language.
+// Priority: explicit --lang > runtime user's default language (runtime.Lang()).
+// When both are empty, lang is omitted so the server falls back to its default
+// (owner-language / built-in default). The server also tolerates equivalent
+// spellings (case / hyphen / underscore / short code) and falls back to a
+// default name for unsupported or invalid languages.
+func injectLang(runtime *common.RuntimeContext, body map[string]interface{}) {
+	if lang := strings.TrimSpace(runtime.Str("lang")); lang != "" {
+		body["lang"] = lang
+		return
+	}
+	if lang := strings.TrimSpace(string(runtime.Lang())); lang != "" {
+		body["lang"] = lang
+	}
 }
 
 // buildReadOption 拼装 read_option JSON；full/空模式返回 nil，让服务端走默认全文路径。

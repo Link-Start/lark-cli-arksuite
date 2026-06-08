@@ -58,6 +58,33 @@ func TestBuildFetchBodyOmitsEmptyScene(t *testing.T) {
 	}
 }
 
+func TestBuildFetchBodyIncludesExplicitLang(t *testing.T) {
+	t.Parallel()
+
+	runtime := newFetchBodyTestRuntime(context.Background())
+	if err := runtime.Cmd.Flags().Set("lang", "ja_jp"); err != nil {
+		t.Fatalf("set lang flag: %v", err)
+	}
+
+	body := buildFetchBody(runtime)
+	if got := body["lang"]; got != "ja_jp" {
+		t.Fatalf("lang = %#v, want %q", got, "ja_jp")
+	}
+}
+
+func TestBuildFetchBodyOmitsEmptyLang(t *testing.T) {
+	t.Parallel()
+
+	// No --lang and a nil Config (TestNewRuntimeContextWithCtx ... nil) means
+	// runtime.Lang() is empty, so lang must be omitted from the body.
+	runtime := newFetchBodyTestRuntime(context.Background())
+
+	body := buildFetchBody(runtime)
+	if _, ok := body["lang"]; ok {
+		t.Fatalf("did not expect lang in fetch body when unset: %#v", body)
+	}
+}
+
 func newFetchBodyTestRuntime(ctx context.Context) *common.RuntimeContext {
 	cmd := &cobra.Command{Use: "+fetch"}
 	cmd.Flags().String("doc-format", "xml", "")
@@ -70,6 +97,7 @@ func newFetchBodyTestRuntime(ctx context.Context) *common.RuntimeContext {
 	cmd.Flags().Int("context-before", 0, "")
 	cmd.Flags().Int("context-after", 0, "")
 	cmd.Flags().Int("max-depth", -1, "")
+	cmd.Flags().String("lang", "", "")
 	return common.TestNewRuntimeContextWithCtx(ctx, cmd, nil)
 }
 

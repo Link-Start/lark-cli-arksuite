@@ -27,6 +27,8 @@ func v2UpdateFlags() []common.Flag {
 		{Name: "command", Desc: "operation; requirements: str_replace(--pattern), block_delete(--block-id), block_insert_after/block_replace(--block-id,--content), block_copy_insert_after/block_move_after(--block-id,--src-block-ids), overwrite/append(--content)", Enum: validCommandsV2Keys()},
 		{Name: "doc-format", Desc: "content format for --content; xml is default for precise rich edits, markdown for user-provided Markdown or plain append/overwrite", Default: "xml", Enum: []string{"xml", "markdown"}},
 		{Name: "content", Desc: "replacement or inserted content; XML by default or Markdown when --doc-format markdown; empty with str_replace deletes match. " + docsContentSkillHelp + "; use --help for the latest command flags", Input: []string{common.File, common.Stdin}},
+		{Name: "input", Desc: "hidden: fetch JSON envelope/data/document input; extracts document.content and document.reference_map", Hidden: true, Input: []string{common.File, common.Stdin}},
+		{Name: "reference-map", Desc: "hidden: reference_map JSON object for external html5-block data", Hidden: true, Input: []string{common.File, common.Stdin}},
 		{Name: "pattern", Desc: "str_replace match pattern; XML mode is inline text, Markdown mode can match multiline text"},
 		{Name: "block-id", Desc: "target anchor/block id for block operations; -1 means document end where supported"},
 		{Name: "src-block-ids", Desc: "comma-separated source block ids for block_copy_insert_after and block_move_after"},
@@ -52,7 +54,11 @@ func validateUpdateV2(_ context.Context, runtime *common.RuntimeContext) error {
 	if !validCommandsV2[cmd] {
 		return common.FlagErrorf("invalid --command %q, valid: str_replace | block_delete | block_insert_after | block_copy_insert_after | block_replace | block_move_after | overwrite | append", cmd)
 	}
+	if err := validateDocsV2WriteInputFlags(runtime); err != nil {
+		return err
+	}
 	content := runtime.Str("content")
+	hasWriteInput := content != "" || runtime.Changed("input")
 	pattern := runtime.Str("pattern")
 	blockID := runtime.Str("block-id")
 	srcBlockIDs := runtime.Str("src-block-ids")
@@ -66,12 +72,15 @@ func validateUpdateV2(_ context.Context, runtime *common.RuntimeContext) error {
 		if blockID == "" {
 			return common.FlagErrorf("--command block_delete requires --block-id")
 		}
+		if hasWriteInput {
+			return common.FlagErrorf("--command block_delete does not accept --content or --input")
+		}
 	case "block_insert_after":
 		if blockID == "" {
 			return common.FlagErrorf("--command block_insert_after requires --block-id")
 		}
-		if content == "" {
-			return common.FlagErrorf("--command block_insert_after requires --content")
+		if !hasWriteInput {
+			return common.FlagErrorf("--command block_insert_after requires --content or --input")
 		}
 	case "block_copy_insert_after":
 		if blockID == "" {
@@ -80,6 +89,9 @@ func validateUpdateV2(_ context.Context, runtime *common.RuntimeContext) error {
 		if srcBlockIDs == "" {
 			return common.FlagErrorf("--command block_copy_insert_after requires --src-block-ids")
 		}
+		if hasWriteInput {
+			return common.FlagErrorf("--command block_copy_insert_after does not accept --content or --input")
+		}
 	case "block_move_after":
 		if blockID == "" {
 			return common.FlagErrorf("--command block_move_after requires --block-id")
@@ -87,27 +99,27 @@ func validateUpdateV2(_ context.Context, runtime *common.RuntimeContext) error {
 		if srcBlockIDs == "" {
 			return common.FlagErrorf("--command block_move_after requires --src-block-ids")
 		}
-		if content != "" {
-			return common.FlagErrorf("--command block_move_after does not accept --content; use --src-block-ids")
+		if hasWriteInput {
+			return common.FlagErrorf("--command block_move_after does not accept --content or --input; use --src-block-ids")
 		}
 	case "block_replace":
 		if blockID == "" {
 			return common.FlagErrorf("--command block_replace requires --block-id")
 		}
-		if content == "" {
-			return common.FlagErrorf("--command block_replace requires --content")
+		if !hasWriteInput {
+			return common.FlagErrorf("--command block_replace requires --content or --input")
 		}
 	case "overwrite":
-		if content == "" {
-			return common.FlagErrorf("--command overwrite requires --content")
+		if !hasWriteInput {
+			return common.FlagErrorf("--command overwrite requires --content or --input")
 		}
 	case "append":
-		if content == "" {
-			return common.FlagErrorf("--command append requires --content")
+		if !hasWriteInput {
+			return common.FlagErrorf("--command append requires --content or --input")
 		}
 	}
-	if content != "" {
-		if err := validateHTML5BlockWriteContent(runtime, runtime.Str("doc-format"), content); err != nil {
+	if hasWriteInput {
+		if _, err := resolveDocsV2WriteInput(runtime); err != nil {
 			return err
 		}
 	}
@@ -117,7 +129,7 @@ func validateUpdateV2(_ context.Context, runtime *common.RuntimeContext) error {
 func dryRunUpdateV2(_ context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 	// Validate has already accepted --doc; parseDocumentRef cannot fail here.
 	ref, _ := parseDocumentRef(runtime.Str("doc"))
-	body, err := buildUpdateBodyWithHTML5Resources(runtime)
+	body, err := buildUpdateBodyWithHTML5ReferenceMap(runtime)
 	if err != nil {
 		body = buildUpdateBody(runtime)
 	}
@@ -133,7 +145,7 @@ func executeUpdateV2(_ context.Context, runtime *common.RuntimeContext) error {
 	ref, _ := parseDocumentRef(runtime.Str("doc"))
 
 	apiPath := fmt.Sprintf("/open-apis/docs_ai/v1/documents/%s", ref.Token)
-	body, err := buildUpdateBodyWithHTML5Resources(runtime)
+	body, err := buildUpdateBodyWithHTML5ReferenceMap(runtime)
 	if err != nil {
 		return err
 	}

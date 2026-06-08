@@ -20,8 +20,10 @@ var migratedEnvelopePaths = []string{
 	"shortcuts/calendar/",
 	"shortcuts/drive/",
 	"shortcuts/mail/",
+	"shortcuts/minutes/",
 	"shortcuts/okr/",
 	"shortcuts/task/",
+	"shortcuts/vc/",
 	"shortcuts/whiteboard/",
 	"shortcuts/im/",
 }

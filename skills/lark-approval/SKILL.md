@@ -16,7 +16,7 @@ metadata:
 
 | 想做什么 | 命令 |
 |---|---|
-| 查待办/已办/已发起 | `tasks query`（`topic`：1待办 2已办 3已发起 17未读 18已读）|
+| 查待办/已办 | `tasks query`（`topic`：1待办 2已办 17未读 18已读）|
 | 看表单/进度/当前节点 | `instances get` |
 | 同意/拒绝 | `tasks approve` / `tasks reject` |
 | 转交/加签/退回 | `tasks transfer` / `tasks add_sign` / `tasks rollback` |

@@ -15,7 +15,31 @@ import (
 	"github.com/larksuite/cli/internal/cmdutil"
 	"github.com/larksuite/cli/internal/httpmock"
 	"github.com/larksuite/cli/internal/output"
+	"github.com/larksuite/cli/shortcuts/common"
 )
+
+func TestDocsV2ReferenceMapFlagIsPublicFileInput(t *testing.T) {
+	for name, flags := range map[string][]common.Flag{
+		"create": v2CreateFlags(),
+		"update": v2UpdateFlags(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			flag := findDocsTestFlag(flags, "reference-map")
+			if flag.Name == "" {
+				t.Fatal("reference-map flag not found")
+			}
+			if flag.Hidden {
+				t.Fatal("reference-map flag should be public")
+			}
+			if !hasDocsTestInput(flag, common.File) || !hasDocsTestInput(flag, common.Stdin) {
+				t.Fatalf("reference-map Input = %#v, want file and stdin", flag.Input)
+			}
+			if !strings.Contains(flag.Desc, "@reference-map.json") {
+				t.Fatalf("reference-map help should mention @file support, got %q", flag.Desc)
+			}
+		})
+	}
+}
 
 func TestDocsCreateV2HTML5BlockReferenceMapFromPath(t *testing.T) {
 	dir := t.TempDir()
@@ -53,6 +77,24 @@ func TestDocsCreateV2HTML5BlockReferenceMapFromPath(t *testing.T) {
 	if _, ok := body["resources"]; ok {
 		t.Fatalf("request body must not use resources: %#v", body)
 	}
+}
+
+func findDocsTestFlag(flags []common.Flag, name string) common.Flag {
+	for _, flag := range flags {
+		if flag.Name == name {
+			return flag
+		}
+	}
+	return common.Flag{}
+}
+
+func hasDocsTestInput(flag common.Flag, input string) bool {
+	for _, item := range flag.Input {
+		if item == input {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDocsUpdateV2HTML5BlockReferenceMapFromPath(t *testing.T) {
@@ -170,6 +212,7 @@ func TestDocsFetchV2HTML5BlockKeepsSmallReferenceMapInline(t *testing.T) {
 				},
 			},
 		},
+		"tips": "must_read_html_code",
 	})
 
 	err := mountAndRunDocs(t, DocsFetch, []string{
@@ -204,8 +247,11 @@ func TestDocsFetchV2HTML5BlockKeepsSmallReferenceMapInline(t *testing.T) {
 	if _, ok := doc["resources"]; ok {
 		t.Fatalf("fetch output must not use resources: %#v", doc)
 	}
-	if suggestions, _ := data["suggestions"].([]interface{}); len(suggestions) != 1 || suggestions[0] != html5BlockSuggestionRead {
-		t.Fatalf("suggestions not preserved: %#v", data["suggestions"])
+	if _, ok := data["suggestions"]; ok {
+		t.Fatalf("CLI must not add suggestions; service tips is enough: %#v", data["suggestions"])
+	}
+	if got := data["tips"]; got != "must_read_html_code" {
+		t.Fatalf("tips should be preserved from service response, got %#v", got)
 	}
 }
 
@@ -289,6 +335,38 @@ func TestDocsCreateV2HTML5BlockReferenceMapAdvancedInput(t *testing.T) {
 	}
 	refMap := decodeHTML5ReferenceMap(t, body["reference_map"])
 	if got := refMap[html5BlockTag]["html5_1"].Data; got != "<html></html>" {
+		t.Fatalf("reference_map html data = %q", got)
+	}
+}
+
+func TestDocsCreateV2HTML5BlockReferenceMapFromFile(t *testing.T) {
+	dir := t.TempDir()
+	cmdutil.TestChdir(t, dir)
+	if err := os.WriteFile("reference-map.json", []byte(`{"html5-block":{"html5_1":{"data":"<html>from file</html>"}}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(reference-map.json) error: %v", err)
+	}
+
+	f, stdout, _, reg := cmdutil.TestFactory(t, docsCreateTestConfig(t, ""))
+	stub := registerDocsAIStub(reg, "POST", "/open-apis/docs_ai/v1/documents", map[string]interface{}{
+		"document": map[string]interface{}{
+			"document_id": "doxcn_new_doc",
+			"revision_id": float64(1),
+		},
+	})
+
+	err := runDocsCreateShortcut(t, f, stdout, []string{
+		"+create",
+		"--api-version", "v2",
+		"--content", `<html5-block data-ref="html5_1"></html5-block>`,
+		"--reference-map", "@reference-map.json",
+		"--as", "user",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	body := decodeRequestBody(t, stub.CapturedBody)
+	refMap := decodeHTML5ReferenceMap(t, body["reference_map"])
+	if got := refMap[html5BlockTag]["html5_1"].Data; got != "<html>from file</html>" {
 		t.Fatalf("reference_map html data = %q", got)
 	}
 }

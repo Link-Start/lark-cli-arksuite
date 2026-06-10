@@ -29,7 +29,7 @@ func v2UpdateFlags() []common.Flag {
 		{Name: "doc-format", Desc: "content format for --content; xml is default for precise rich edits, markdown for user-provided Markdown or plain append/overwrite", Default: "xml", Enum: []string{"xml", "markdown"}},
 		{Name: "content", Desc: "replacement or inserted content; XML by default or Markdown when --doc-format markdown; empty with str_replace deletes match. " + docsContentSkillHelp + "; use --help for the latest command flags", Input: []string{common.File, common.Stdin}},
 		{Name: "input", Desc: "hidden: fetch JSON envelope/data/document input; extracts document.content and document.reference_map", Hidden: true, Input: []string{common.File, common.Stdin}},
-		{Name: "reference-map", Desc: "hidden: reference_map JSON object for external html5-block data", Hidden: true, Input: []string{common.File, common.Stdin}},
+		{Name: "reference-map", Desc: "reference_map JSON object for external html5-block data; use with --content that contains data-ref, or pass @reference-map.json", Input: []string{common.File, common.Stdin}},
 		{Name: "pattern", Desc: "str_replace match pattern; XML mode is inline text, Markdown mode can match multiline text"},
 		{Name: "block-id", Desc: "target block ID(s) for block operations (comma-separated for batch delete); -1 means document end where supported"},
 		{Name: "src-block-ids", Desc: "comma-separated source block ids for block_copy_insert_after and block_move_after"},

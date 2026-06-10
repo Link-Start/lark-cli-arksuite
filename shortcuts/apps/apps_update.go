@@ -20,9 +20,13 @@ var AppsUpdate = common.Shortcut{
 	Command:     "+update",
 	Description: "Partially update a Miaoda app (only provided fields are sent)",
 	Risk:        "write",
-	Scopes:      []string{"spark:app:write"},
-	AuthTypes:   []string{"user"},
-	HasFormat:   true,
+	Tips: []string{
+		`Example: lark-cli apps +update --app-id <app_id> --name "新名称"`,
+		`Example: lark-cli apps +update --app-id <app_id> --description "..."`,
+	},
+	Scopes:    []string{"spark:app:write"},
+	AuthTypes: []string{"user"},
+	HasFormat: true,
 	Flags: []common.Flag{
 		{Name: "app-id", Desc: "app ID", Required: true},
 		{Name: "name", Desc: "new app display name"},
@@ -48,9 +52,9 @@ var AppsUpdate = common.Shortcut{
 	Execute: func(ctx context.Context, rctx *common.RuntimeContext) error {
 		appID := strings.TrimSpace(rctx.Str("app-id"))
 		path := fmt.Sprintf("%s/apps/%s", apiBasePath, validate.EncodePathSegment(appID))
-		data, err := rctx.CallAPI("PATCH", path, nil, buildAppsUpdateBody(rctx))
+		data, err := rctx.CallAPITyped("PATCH", path, nil, buildAppsUpdateBody(rctx))
 		if err != nil {
-			return err
+			return withAppsHint(err, appIDListHint)
 		}
 		rctx.OutFormat(data, nil, func(w io.Writer) {
 			fmt.Fprintf(w, "updated: %s\n", common.GetString(data, "app", "app_id"))

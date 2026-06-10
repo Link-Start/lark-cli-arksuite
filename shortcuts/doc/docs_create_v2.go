@@ -37,10 +37,7 @@ func validateCreateV2(_ context.Context, runtime *common.RuntimeContext) error {
 		)
 	}
 	if !runtime.Changed("input") && runtime.Str("content") == "" {
-		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--content or --input is required").WithParams(
-			errs.InvalidParam{Name: "--content", Reason: "required when --input is absent"},
-			errs.InvalidParam{Name: "--input", Reason: "required when --content is absent"},
-		)
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--content or --input is required").WithParam("--content")
 	}
 	if _, err := resolveDocsV2WriteInput(runtime); err != nil {
 		return err

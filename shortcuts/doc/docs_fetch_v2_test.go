@@ -5,6 +5,7 @@ package doc
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -56,6 +57,25 @@ func TestBuildFetchBodyOmitsEmptyScene(t *testing.T) {
 	body := buildFetchBody(runtime)
 	if _, ok := body["scene"]; ok {
 		t.Fatalf("did not expect empty scene in fetch body: %#v", body)
+	}
+}
+
+func TestBuildFetchBodyRequestsHTML5BlockData(t *testing.T) {
+	t.Parallel()
+
+	runtime := newFetchBodyTestRuntime(context.Background())
+
+	body := buildFetchBody(runtime)
+	raw, ok := body["extra_param"].(string)
+	if !ok || raw == "" {
+		t.Fatalf("extra_param = %#v, want JSON string", body["extra_param"])
+	}
+	var extra map[string]bool
+	if err := json.Unmarshal([]byte(raw), &extra); err != nil {
+		t.Fatalf("extra_param is not valid JSON: %v\n%s", err, raw)
+	}
+	if !extra["return_html5_block_data"] {
+		t.Fatalf("return_html5_block_data = false, extra_param=%s", raw)
 	}
 }
 

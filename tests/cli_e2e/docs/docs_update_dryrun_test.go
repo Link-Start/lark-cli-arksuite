@@ -11,6 +11,7 @@ import (
 
 	clie2e "github.com/larksuite/cli/tests/cli_e2e"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestDocs_DryRunDefaultsToV2OpenAPI(t *testing.T) {
@@ -23,9 +24,10 @@ func TestDocs_DryRunDefaultsToV2OpenAPI(t *testing.T) {
 	t.Cleanup(cancel)
 
 	tests := []struct {
-		name    string
-		args    []string
-		wantURL string
+		name           string
+		args           []string
+		wantURL        string
+		wantExtraParam string
 	}{
 		{
 			name: "create",
@@ -53,7 +55,8 @@ func TestDocs_DryRunDefaultsToV2OpenAPI(t *testing.T) {
 				"--doc", "doxcnDryRunE2E",
 				"--dry-run",
 			},
-			wantURL: "/open-apis/docs_ai/v1/documents/doxcnDryRunE2E/fetch",
+			wantURL:        "/open-apis/docs_ai/v1/documents/doxcnDryRunE2E/fetch",
+			wantExtraParam: `{"enable_user_cite_reference_map":true}`,
 		},
 		{
 			name: "update",
@@ -102,6 +105,10 @@ func TestDocs_DryRunDefaultsToV2OpenAPI(t *testing.T) {
 			}
 			if strings.Contains(combined, "--api-version") {
 				t.Fatalf("dry-run output should not ask for --api-version\nstdout:\n%s\nstderr:\n%s", result.Stdout, result.Stderr)
+			}
+			if tt.wantExtraParam != "" {
+				extraParam := gjson.Get(result.Stdout, "api.0.body.extra_param").String()
+				require.JSONEq(t, tt.wantExtraParam, extraParam, "stdout:\n%s", result.Stdout)
 			}
 		})
 	}

@@ -14,6 +14,8 @@ import (
 	"github.com/larksuite/cli/shortcuts/common"
 )
 
+const docsFetchExtraParam = `{"enable_user_cite_reference_map":true}`
+
 // v2FetchFlags returns the flag definitions for the v2 (OpenAPI) fetch path.
 func v2FetchFlags() []common.Flag {
 	return []common.Flag{
@@ -85,7 +87,8 @@ func executeFetchV2(_ context.Context, runtime *common.RuntimeContext) error {
 
 func buildFetchBody(runtime *common.RuntimeContext) map[string]interface{} {
 	body := map[string]interface{}{
-		"format": runtime.Str("doc-format"),
+		"format":      runtime.Str("doc-format"),
+		"extra_param": docsFetchExtraParam,
 	}
 	if v := runtime.Int("revision-id"); v > 0 {
 		body["revision_id"] = v

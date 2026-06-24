@@ -44,6 +44,11 @@ var wbUpdateFlags = []common.Flag{
 	{Name: "input_format", Desc: "format of input data: raw | plantuml | mermaid | svg. Default is raw.", Required: false},
 }
 
+// wbUpdateValidate validates the whiteboard update command arguments.
+//
+// It checks the whiteboard token and idempotent token for dangerous control
+// characters, enforces a minimum length for a non-empty idempotent token, and
+// ensures the input format is one of raw, plantuml, mermaid, or svg.
 func wbUpdateValidate(ctx context.Context, runtime *common.RuntimeContext) error {
 	// 检查 token 是否包含控制字符（空字符串下自动跳过了）
 	if err := common.RejectDangerousCharsTyped("--whiteboard-token", runtime.Str("whiteboard-token")); err != nil {
@@ -74,6 +79,8 @@ func getFormat(runtime *common.RuntimeContext) string {
 	return format
 }
 
+// wbUpdateDryRun describes the HTTP request used to update a whiteboard.
+// It returns a failure description when source is missing or cannot be parsed.
 func wbUpdateDryRun(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
 	// 读取输入内容
 	input := runtime.Str("source")
@@ -112,6 +119,10 @@ func wbUpdateDryRun(ctx context.Context, runtime *common.RuntimeContext) *common
 	return desc
 }
 
+// wbUpdateExecute updates a whiteboard from the supplied source input.
+// It requires --source and dispatches to the raw node update path for raw input
+// or the diagram import path for PlantUML, Mermaid, and SVG input.
+// It returns an error if the source is missing or the input format is unsupported.
 func wbUpdateExecute(ctx context.Context, runtime *common.RuntimeContext) error {
 	token := runtime.Str("whiteboard-token")
 	overwrite := runtime.Bool("overwrite")

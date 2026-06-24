@@ -167,7 +167,8 @@ type exportResp struct {
 	} `json:"data"`
 }
 
-// exportWhiteboardSvg exports a whiteboard as SVG and writes it to stdout or a file.
+// exportWhiteboardSvg exports a whiteboard as SVG and writes the result to stdout or a file.
+// It requests the SVG export for the given whiteboard token and saves the decoded content when an output path is provided.
 func exportWhiteboardSvg(runtime *common.RuntimeContext, wbToken, outDir string) error {
 	reqBody := exportReq{ExportType: "svg"}
 	req := &larkcore.ApiReq{
@@ -238,6 +239,10 @@ func exportWhiteboardSvg(runtime *common.RuntimeContext, wbToken, outDir string)
 	return nil
 }
 
+// exportWhiteboardPreview downloads a whiteboard preview image and saves it as a PNG file.
+//
+// It reports the saved file path and image size on success.
+// Returns an error if the API request fails, the response is rejected, or the file cannot be saved.
 func exportWhiteboardPreview(ctx context.Context, runtime *common.RuntimeContext, wbToken, outDir string) error {
 	req := &larkcore.ApiReq{
 		HttpMethod: http.MethodGet,
@@ -439,6 +444,9 @@ func exportWhiteboardRaw(runtime *common.RuntimeContext, wbToken, outDir string)
 	return nil
 }
 
+// saveOutputFile writes exported content to a file or directory and returns the final path and written size.
+// If outPath is a directory, it creates a file named whiteboard_<token><ext>. If outPath is a file path,
+// it adjusts the file extension to ext, validates the path, and respects the overwrite flag.
 func saveOutputFile(outPath, ext, token string, runtime *common.RuntimeContext, data io.Reader) (string, int64, error) {
 	// Step 1: Get final output path
 	info, err := runtime.FileIO().Stat(outPath)

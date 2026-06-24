@@ -54,6 +54,15 @@ func TestWhiteboardUpdate_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid: svg format",
+			flags: map[string]string{
+				"whiteboard-token": "test-token-123",
+				"input_format":     "svg",
+				"source":           "<svg/>",
+			},
+			wantErr: false,
+		},
+		{
 			name: "valid: with idempotent-token",
 			flags: map[string]string{
 				"whiteboard-token": "test-token-123",
@@ -123,7 +132,7 @@ func TestWhiteboardUpdate_Validate_TypedErrors(t *testing.T) {
 	t.Run("bad input_format", func(t *testing.T) {
 		rt := newTestRuntime(map[string]string{
 			"whiteboard-token": "t",
-			"input_format":     "svg",
+			"input_format":     "png",
 			"source":           "{}",
 		}, nil)
 		assertValidationParam(t, wbUpdateValidate(ctx, rt), "--input_format")
@@ -179,6 +188,11 @@ func TestGetFormat(t *testing.T) {
 			name:     "mermaid returns mermaid",
 			flagVal:  FormatMermaid,
 			expected: FormatMermaid,
+		},
+		{
+			name:     "svg returns svg",
+			flagVal:  FormatSVG,
+			expected: FormatSVG,
 		},
 	}
 
@@ -317,6 +331,14 @@ func TestWBUpdateDryRun(t *testing.T) {
 				"source":           "graph TD\nA-->B",
 			},
 		},
+		{
+			name: "dry run svg format",
+			flags: map[string]string{
+				"whiteboard-token": "test-token-123",
+				"input_format":     "svg",
+				"source":           "<svg/>",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -450,6 +472,29 @@ func TestWhiteboardUpdateExecute_MermaidFormat(t *testing.T) {
 	source := `graph TD
 A-->B`
 	args := []string{"+update", "--whiteboard-token", "test-token-mermaid", "--input_format", "mermaid", "--source", source}
+	if err := runUpdateShortcut(t, WhiteboardUpdate, args, factory, stdout); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestWhiteboardUpdateExecute_SVGFormat(t *testing.T) {
+	factory, stdout, reg := newUpdateExecuteFactory(t)
+
+	// SVG shares the /nodes/plantuml endpoint with plantuml/mermaid via syntax_type=3.
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/board/v1/whiteboards/test-token-svg/nodes/plantuml",
+		Body: map[string]interface{}{
+			"code": 0,
+			"msg":  "success",
+			"data": map[string]interface{}{
+				"node_id": "node1",
+			},
+		},
+	})
+
+	source := `<svg xmlns="http://www.w3.org/2000/svg"/>`
+	args := []string{"+update", "--whiteboard-token", "test-token-svg", "--input_format", "svg", "--source", source}
 	if err := runUpdateShortcut(t, WhiteboardUpdate, args, factory, stdout); err != nil {
 		t.Fatalf("err=%v", err)
 	}

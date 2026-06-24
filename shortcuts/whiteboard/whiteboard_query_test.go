@@ -6,6 +6,7 @@ package whiteboard
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -898,6 +899,218 @@ func TestFetchWhiteboardNodes_MissingNodesIsEmpty(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "whiteboard is empty") {
 		t.Fatalf("stdout missing empty whiteboard message: %s", stdout.String())
+	}
+}
+
+func TestExportWhiteboardSvg_DirectOutput(t *testing.T) {
+	factory, stdout, reg := newExecuteFactory(t)
+
+	svgContent := `<svg xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100"/></svg>`
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/board/v1/whiteboards/test-token-svg/export",
+		Body: map[string]interface{}{
+			"code": 0,
+			"msg":  "success",
+			"data": map[string]interface{}{
+				"content":   base64.StdEncoding.EncodeToString([]byte(svgContent)),
+				"mime_type": "image/svg+xml",
+			},
+		},
+	})
+
+	args := []string{"+query", "--whiteboard-token", "test-token-svg", "--output_as", "svg"}
+	if err := runShortcut(t, WhiteboardQuery, args, factory, stdout); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "svg_content") {
+		t.Fatalf("stdout missing svg_content key: %s", stdout.String())
+	}
+}
+
+func TestExportWhiteboardSvg_SaveToFile(t *testing.T) {
+	factory, stdout, reg := newExecuteFactory(t)
+	chdirTemp(t)
+
+	svgContent := `<svg xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="40"/></svg>`
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/board/v1/whiteboards/test-token-svg-file/export",
+		Body: map[string]interface{}{
+			"code": 0,
+			"msg":  "success",
+			"data": map[string]interface{}{
+				"content":   base64.StdEncoding.EncodeToString([]byte(svgContent)),
+				"mime_type": "image/svg+xml",
+			},
+		},
+	})
+
+	args := []string{"+query", "--whiteboard-token", "test-token-svg-file", "--output_as", "svg", "--output", "output", "--overwrite"}
+	if err := runShortcut(t, WhiteboardQuery, args, factory, stdout); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+
+	data, err := os.ReadFile("output.svg")
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	if string(data) != svgContent {
+		t.Fatalf("svg content = %q, want %q", string(data), svgContent)
+	}
+}
+
+func TestExportWhiteboardSvg_HTTP5xx(t *testing.T) {
+	factory, stdout, reg := newExecuteFactory(t)
+
+	reg.Register(&httpmock.Stub{
+		Method:      "POST",
+		URL:         "/open-apis/board/v1/whiteboards/test-token-svg-5xx/export",
+		Status:      502,
+		RawBody:     []byte("bad gateway"),
+		ContentType: "text/plain",
+	})
+
+	args := []string{"+query", "--whiteboard-token", "test-token-svg-5xx", "--output_as", "svg"}
+	err := runShortcut(t, WhiteboardQuery, args, factory, stdout)
+	if err == nil {
+		t.Fatal("expected error for HTTP 502")
+	}
+	var ne *errs.NetworkError
+	if !errors.As(err, &ne) {
+		t.Fatalf("error is not *errs.NetworkError: %T (%v)", err, err)
+	}
+	if ne.Subtype != errs.SubtypeNetworkServer {
+		t.Errorf("Subtype = %q, want %q", ne.Subtype, errs.SubtypeNetworkServer)
+	}
+	if ne.Code != 502 {
+		t.Errorf("Code = %d, want 502", ne.Code)
+	}
+	if !ne.Retryable {
+		t.Error("expected Retryable = true")
+	}
+}
+
+func TestExportWhiteboardSvg_HTTP4xx(t *testing.T) {
+	factory, stdout, reg := newExecuteFactory(t)
+
+	reg.Register(&httpmock.Stub{
+		Method:      "POST",
+		URL:         "/open-apis/board/v1/whiteboards/test-token-svg-403/export",
+		Status:      403,
+		RawBody:     []byte("forbidden"),
+		ContentType: "text/plain",
+	})
+
+	args := []string{"+query", "--whiteboard-token", "test-token-svg-403", "--output_as", "svg"}
+	err := runShortcut(t, WhiteboardQuery, args, factory, stdout)
+	if err == nil {
+		t.Fatal("expected error for HTTP 403")
+	}
+	var apiErr *errs.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error is not *errs.APIError: %T (%v)", err, err)
+	}
+	if apiErr.Code != 403 {
+		t.Errorf("Code = %d, want 403", apiErr.Code)
+	}
+}
+
+func TestExportWhiteboardSvg_InvalidJSON(t *testing.T) {
+	factory, stdout, reg := newExecuteFactory(t)
+
+	reg.Register(&httpmock.Stub{
+		Method:      "POST",
+		URL:         "/open-apis/board/v1/whiteboards/test-token-svg-badjson/export",
+		Status:      200,
+		RawBody:     []byte("not json at all"),
+		ContentType: "application/json",
+	})
+
+	args := []string{"+query", "--whiteboard-token", "test-token-svg-badjson", "--output_as", "svg"}
+	err := runShortcut(t, WhiteboardQuery, args, factory, stdout)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+	assertInvalidResponse(t, err)
+}
+
+func TestExportWhiteboardSvg_NonZeroCode(t *testing.T) {
+	factory, stdout, reg := newExecuteFactory(t)
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/board/v1/whiteboards/test-token-svg-apierr/export",
+		Body: map[string]interface{}{
+			"code": 99001,
+			"msg":  "whiteboard not found",
+			"data": map[string]interface{}{},
+		},
+	})
+
+	args := []string{"+query", "--whiteboard-token", "test-token-svg-apierr", "--output_as", "svg"}
+	err := runShortcut(t, WhiteboardQuery, args, factory, stdout)
+	if err == nil {
+		t.Fatal("expected error for non-zero code")
+	}
+	var apiErr *errs.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error is not *errs.APIError: %T (%v)", err, err)
+	}
+	if apiErr.Code != 99001 {
+		t.Errorf("Code = %d, want 99001", apiErr.Code)
+	}
+}
+
+func TestExportWhiteboardSvg_InvalidBase64(t *testing.T) {
+	factory, stdout, reg := newExecuteFactory(t)
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/board/v1/whiteboards/test-token-svg-badbase64/export",
+		Body: map[string]interface{}{
+			"code": 0,
+			"msg":  "success",
+			"data": map[string]interface{}{
+				"content":   "!!!not-valid-base64!!!",
+				"mime_type": "image/svg+xml",
+			},
+		},
+	})
+
+	args := []string{"+query", "--whiteboard-token", "test-token-svg-badbase64", "--output_as", "svg"}
+	err := runShortcut(t, WhiteboardQuery, args, factory, stdout)
+	if err == nil {
+		t.Fatal("expected error for invalid base64")
+	}
+	assertInvalidResponse(t, err)
+}
+
+func TestWhiteboardQuery_Validate_SvgValid(t *testing.T) {
+	ctx := context.Background()
+	chdirTemp(t)
+
+	rt := newTestRuntime(map[string]string{
+		"whiteboard-token": "test-token-123",
+		"output_as":        "svg",
+	}, nil)
+	if err := WhiteboardQuery.Validate(ctx, rt); err != nil {
+		t.Fatalf("expected svg to be valid, got err=%v", err)
+	}
+}
+
+func TestWhiteboardQuery_DryRun_Svg(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	rt := newTestRuntime(map[string]string{
+		"whiteboard-token": "test-token-123",
+		"output_as":        "svg",
+	}, nil)
+	dryRun := WhiteboardQuery.DryRun(ctx, rt)
+	if dryRun == nil {
+		t.Fatal("DryRun() returned nil for svg")
 	}
 }
 

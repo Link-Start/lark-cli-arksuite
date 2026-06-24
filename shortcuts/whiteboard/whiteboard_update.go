@@ -20,12 +20,14 @@ const (
 	FormatRaw      = "raw"
 	FormatPlantUML = "plantuml"
 	FormatMermaid  = "mermaid"
+	FormatSVG      = "svg"
 )
 
 var formatCodeMap = map[string]int{
 	FormatRaw:      0,
 	FormatPlantUML: 1,
 	FormatMermaid:  2,
+	FormatSVG:      3,
 }
 
 var wbUpdateScopes = []string{"board:whiteboard:node:create"}
@@ -35,7 +37,7 @@ var wbUpdateFlags = []common.Flag{
 	{Name: "whiteboard-token", Desc: "whiteboard token of the whiteboard to update. You will need edit permission to update the whiteboard.", Required: true},
 	{Name: "overwrite", Desc: "overwrite the whiteboard content, delete all existing content before update. Default is false.", Required: false, Type: "bool"},
 	{Name: "source", Desc: "Input whiteboard data.", Required: true, Input: []string{common.Stdin, common.File}},
-	{Name: "input_format", Desc: "format of input data: raw | plantuml | mermaid. Default is raw.", Required: false},
+	{Name: "input_format", Desc: "format of input data: raw | plantuml | mermaid | svg. Default is raw.", Required: false},
 }
 
 func wbUpdateValidate(ctx context.Context, runtime *common.RuntimeContext) error {
@@ -53,8 +55,8 @@ func wbUpdateValidate(ctx context.Context, runtime *common.RuntimeContext) error
 
 	// 检查 --input_format 标志
 	format := getFormat(runtime)
-	if format != FormatRaw && format != FormatPlantUML && format != FormatMermaid {
-		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--input_format must be one of: raw | plantuml | mermaid").WithParam("--input_format")
+	if format != FormatRaw && format != FormatPlantUML && format != FormatMermaid && format != FormatSVG {
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--input_format must be one of: raw | plantuml | mermaid | svg").WithParam("--input_format")
 	}
 	return nil
 }
@@ -91,7 +93,7 @@ func wbUpdateDryRun(ctx context.Context, runtime *common.RuntimeContext) *common
 			Overwrite: overwrite,
 		}
 		desc.POST(fmt.Sprintf("/open-apis/board/v1/whiteboards/%s/nodes", common.MaskToken(url.PathEscape(token)))).Body(reqBody).Desc("create all nodes of the whiteboard.")
-	case FormatPlantUML, FormatMermaid:
+	case FormatPlantUML, FormatMermaid, FormatSVG:
 		syntaxType := formatCodeMap[format]
 		reqBody := plantumlCreateReq{
 			PlantUmlCode: input,
@@ -120,7 +122,7 @@ func wbUpdateExecute(ctx context.Context, runtime *common.RuntimeContext) error 
 	switch format {
 	case FormatRaw:
 		return updateWhiteboardByRawNodes(ctx, runtime, token, []byte(input), overwrite, idempotentToken)
-	case FormatPlantUML, FormatMermaid:
+	case FormatPlantUML, FormatMermaid, FormatSVG:
 		return updateWhiteboardByCode(ctx, runtime, token, []byte(input), format, overwrite, idempotentToken)
 	default:
 		return errs.NewValidationError(errs.SubtypeInvalidArgument, "unsupported format: %s", format).WithParam("--input_format")

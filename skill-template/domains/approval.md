@@ -1,15 +1,3 @@
----
-name: lark-approval
-version: 1.2.0
-description: "飞书审批：查询和处理审批待办/已办/实例，搜索可发起审批定义、查看定义详情并发起原生审批实例。当用户要处理审批任务、查看审批实例、搜索或发起审批时使用。审批待办不是飞书任务；非审批类待办走 lark-task。不负责创建审批定义；三方审批定义不走原生提单。"
-metadata:
-  requires:
-    bins: ["lark-cli"]
-  cliHelp: "lark-cli approval --help"
----
-
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
-
 所有命令默认 `--as user`（审批是人的动作）。调用前先 `lark-cli schema approval.<resource>.<method>` 查参数结构，不要猜字段。
 
 ## 选哪个命令
@@ -50,7 +38,3 @@ lark-cli approval tasks approve --data '{"instance_code":"<ic>","task_id":"<tid>
 | 三方定义 | `is_external=true` 时不要调用 `approval instances create`，返回 `create_link` 并说明需通过链接发起 |
 | 表单与节点参数 | 控件 `value` 结构看 [`references/lark-approval-instance-form-control-parameters.md`](references/lark-approval-instance-form-control-parameters.md)；值来源看 [`references/lark-approval-instance-value-sourcing.md`](references/lark-approval-instance-value-sourcing.md) |
 | 真正执行前 | 让用户确认最终定义、表单值和节点参数；执行时显式传 `--yes`，成功后回报 `instance_code` 与 `instance_link` |
-
-## 不在本 skill 范围
-
-创建审批定义（走飞书客户端或审批管理后台）；三方定义发起（返回 `create_link`，引导用户通过链接发起）；非审批类待办 → [`lark-task`](../lark-task/SKILL.md)

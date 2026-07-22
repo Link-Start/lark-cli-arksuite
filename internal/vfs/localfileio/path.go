@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/larksuite/cli/internal/charcheck"
 	"github.com/larksuite/cli/internal/vfs"
@@ -20,6 +21,24 @@ func SafeOutputPath(path string) (string, error) {
 // SafeInputPath validates an upload/read source path for --file flags.
 func SafeInputPath(path string) (string, error) {
 	return safePath(path, "--file")
+}
+
+// LocalInputPath validates an input path in the process local filesystem
+// namespace. It intentionally does not impose cwd containment or canonicalize
+// the path: absolute paths, parent-relative paths, and symlink traversal retain
+// their normal OS semantics. Character validation remains mandatory because
+// paths are user-controlled and may appear in errors or progress output.
+func LocalInputPath(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("local input path must not be empty")
+	}
+	if strings.IndexFunc(path, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("local input path must not contain control characters")
+	}
+	if err := charcheck.RejectControlChars(path, "local input path"); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // SafeLocalFlagPath validates a flag value as a local file path.

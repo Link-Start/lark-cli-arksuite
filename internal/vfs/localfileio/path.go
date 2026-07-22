@@ -38,7 +38,15 @@ func LocalInputPath(path string) (string, error) {
 	if err := charcheck.RejectControlChars(path, "local input path"); err != nil {
 		return "", err
 	}
+	if err := validateLocalInputPlatform(path); err != nil {
+		return "", err
+	}
 	return path, nil
+}
+
+func isWindowsNonLocalNamespace(path string) bool {
+	normalized := strings.ReplaceAll(path, "/", `\`)
+	return strings.HasPrefix(normalized, `\\`) || strings.HasPrefix(normalized, `\??\`)
 }
 
 // SafeLocalFlagPath validates a flag value as a local file path.
@@ -48,7 +56,7 @@ func SafeLocalFlagPath(flagName, value string) (string, error) {
 		return value, nil
 	}
 	if _, err := SafeInputPath(value); err != nil {
-		return "", fmt.Errorf("%s: %v", flagName, err)
+		return "", fmt.Errorf("%s: %w", flagName, err)
 	}
 	return value, nil
 }

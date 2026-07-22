@@ -79,7 +79,6 @@ func TestLocalInputPath_AllowsLocalNamespaceWithoutRewriting(t *testing.T) {
 		"./report.pdf",
 		"nested/../report.pdf",
 		`C:\Users\agent\report.pdf`,
-		`\\server\share\report.pdf`,
 		"报告.pdf",
 	} {
 		t.Run(input, func(t *testing.T) {
@@ -91,6 +90,32 @@ func TestLocalInputPath_AllowsLocalNamespaceWithoutRewriting(t *testing.T) {
 				t.Fatalf("LocalInputPath(%q) = %q, want path preserved verbatim", input, got)
 			}
 		})
+	}
+}
+
+func TestWindowsNonLocalNamespace(t *testing.T) {
+	for _, input := range []string{
+		`\\server\share\report.pdf`,
+		`//server/share/report.pdf`,
+		`\\.\pipe\upload`,
+		`\\?\C:\Users\agent\report.pdf`,
+		`\\?\UNC\server\share\report.pdf`,
+		`\??\C:\Users\agent\report.pdf`,
+	} {
+		if !isWindowsNonLocalNamespace(input) {
+			t.Errorf("isWindowsNonLocalNamespace(%q) = false, want true", input)
+		}
+	}
+
+	for _, input := range []string{
+		`C:\Users\agent\report.pdf`,
+		`C:/Users/agent/report.pdf`,
+		`..\outside\report.pdf`,
+		`.\report.pdf`,
+	} {
+		if isWindowsNonLocalNamespace(input) {
+			t.Errorf("isWindowsNonLocalNamespace(%q) = true, want false", input)
+		}
 	}
 }
 

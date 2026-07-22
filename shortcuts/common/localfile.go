@@ -17,43 +17,20 @@ import (
 )
 
 // ValidateLocalFileFlag validates that a local input path exists, is a regular
-// readable file, and does not exceed maxBytes. Absolute and relative paths use
+// file, and does not exceed maxBytes. Absolute and relative paths use
 // the process filesystem namespace.
-func (ctx *RuntimeContext) ValidateLocalFileFlag(flagName string, maxBytes int64) (retErr error) {
-	name, param, err := localFileFlagNames(flagName)
+func (ctx *RuntimeContext) ValidateLocalFileFlag(flagName string, maxBytes int64) error {
+	path, param, err := ctx.localFileFlag(flagName, maxBytes)
 	if err != nil {
 		return err
 	}
-	if ctx == nil || ctx.Cmd == nil {
-		return errs.NewInternalError(errs.SubtypeUnknown, "cannot read %s: runtime command is unavailable", param)
-	}
 
-	path := strings.TrimSpace(ctx.Str(name))
-	if path == "" {
-		return errs.NewValidationError(errs.SubtypeInvalidArgument, "%s is required", param).WithParam(param)
-	}
-	if _, err := validate.LocalInputPath(path); err != nil {
-		return errs.NewValidationError(errs.SubtypeInvalidArgument, "invalid %s path: %v", param, err).
-			WithParam(param).
-			WithCause(err)
-	}
-	if maxBytes < 0 {
-		return errs.NewInternalError(errs.SubtypeUnknown, "invalid read limit configured for %s", param)
-	}
-
-	f, err := cmdutil.OpenLocalFile(path)
+	info, err := cmdutil.StatLocalFile(path)
 	if err != nil {
-		return localFileReadError(param, path, "open", err)
+		return localFileReadError(param, path, "inspect", err)
 	}
-	defer func() {
-		if err := f.Close(); err != nil && retErr == nil {
-			retErr = errs.NewInternalError(errs.SubtypeFileIO, "cannot close %s %q: %v", param, path, err).WithCause(err)
-		}
-	}()
-
-	info, err := f.Stat()
-	if err != nil {
-		return localFileReadError(param, path, "inspect opened", err)
+	if err := localFileRegularError(param, path, info.Mode()); err != nil {
+		return err
 	}
 	if info.Size() > maxBytes {
 		return localFileSizeError(param, path, info.Size(), maxBytes)
@@ -65,15 +42,10 @@ func (ctx *RuntimeContext) ValidateLocalFileFlag(flagName string, maxBytes int64
 // shortcuts. It accepts absolute and relative paths, enforces a hard size
 // limit, and returns command-facing typed errors.
 func (ctx *RuntimeContext) ReadLocalFileFlag(flagName string, maxBytes int64) (data []byte, retErr error) {
-	name, param, err := localFileFlagNames(flagName)
+	path, param, err := ctx.localFileFlag(flagName, maxBytes)
 	if err != nil {
 		return nil, err
 	}
-	if err := ctx.ValidateLocalFileFlag(name, maxBytes); err != nil {
-		return nil, err
-	}
-
-	path := strings.TrimSpace(ctx.Str(name))
 	f, err := cmdutil.OpenLocalFile(path)
 	if err != nil {
 		return nil, localFileReadError(param, path, "open", err)
@@ -88,6 +60,9 @@ func (ctx *RuntimeContext) ReadLocalFileFlag(flagName string, maxBytes int64) (d
 	openedInfo, err := f.Stat()
 	if err != nil {
 		return nil, localFileReadError(param, path, "inspect opened", err)
+	}
+	if err := localFileRegularError(param, path, openedInfo.Mode()); err != nil {
+		return nil, err
 	}
 	if openedInfo.Size() > maxBytes {
 		return nil, localFileSizeError(param, path, openedInfo.Size(), maxBytes)
@@ -107,6 +82,39 @@ func (ctx *RuntimeContext) ReadLocalFileFlag(flagName string, maxBytes int64) (d
 			WithParam(param)
 	}
 	return data, nil
+}
+
+func (ctx *RuntimeContext) localFileFlag(flagName string, maxBytes int64) (path, param string, err error) {
+	name, param, err := localFileFlagNames(flagName)
+	if err != nil {
+		return "", "", err
+	}
+	if ctx == nil || ctx.Cmd == nil {
+		return "", param, errs.NewInternalError(errs.SubtypeUnknown, "cannot read %s: runtime command is unavailable", param)
+	}
+
+	path = strings.TrimSpace(ctx.Str(name))
+	if path == "" {
+		return "", param, errs.NewValidationError(errs.SubtypeInvalidArgument, "%s is required", param).WithParam(param)
+	}
+	if _, err := validate.LocalInputPath(path); err != nil {
+		return "", param, errs.NewValidationError(errs.SubtypeInvalidArgument, "invalid %s path: %v", param, err).
+			WithParam(param).
+			WithCause(err)
+	}
+	if maxBytes < 0 {
+		return "", param, errs.NewInternalError(errs.SubtypeUnknown, "invalid read limit configured for %s", param)
+	}
+	return path, param, nil
+}
+
+func localFileRegularError(param, path string, mode fs.FileMode) error {
+	if mode.IsRegular() {
+		return nil
+	}
+	return errs.NewValidationError(errs.SubtypeInvalidArgument,
+		"%s %q is not a regular file", param, path).
+		WithParam(param)
 }
 
 func localFileReadError(param, path, op string, cause error) error {

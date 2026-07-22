@@ -4,7 +4,6 @@
 package cmdutil
 
 import (
-	"fmt"
 	"io/fs"
 
 	"github.com/larksuite/cli/extension/fileio"
@@ -12,36 +11,26 @@ import (
 	"github.com/larksuite/cli/internal/vfs"
 )
 
-// OpenLocalFile opens a regular file in the process filesystem namespace.
+// StatLocalFile returns metadata for a path in the process filesystem namespace.
+// It is intended for advisory validation; callers must validate the opened file
+// again before using its contents.
+func StatLocalFile(path string) (fs.FileInfo, error) {
+	localPath, err := validate.LocalInputPath(path)
+	if err != nil {
+		return nil, &fileio.PathValidationError{Err: err}
+	}
+	return vfs.Stat(localPath)
+}
+
+// OpenLocalFile opens a path in the process filesystem namespace.
 // Absolute and relative paths are accepted. It is the shared replacement for
 // direct os.Open/os.ReadFile use in commands that intentionally read local
-// paths outside the workspace sandbox.
+// paths outside the workspace sandbox. Callers inspect the returned descriptor
+// before reading so validation and use apply to the same opened file.
 func OpenLocalFile(path string) (fs.File, error) {
 	localPath, err := validate.LocalInputPath(path)
 	if err != nil {
 		return nil, &fileio.PathValidationError{Err: err}
 	}
-
-	info, err := vfs.Stat(localPath)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, &fileio.PathValidationError{Err: fmt.Errorf("%q is not a regular file", path)}
-	}
-
-	f, err := vfs.Open(localPath)
-	if err != nil {
-		return nil, err
-	}
-	openedInfo, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	if !openedInfo.Mode().IsRegular() {
-		_ = f.Close()
-		return nil, &fileio.PathValidationError{Err: fmt.Errorf("%q is not a regular file", path)}
-	}
-	return f, nil
+	return vfs.Open(localPath)
 }
